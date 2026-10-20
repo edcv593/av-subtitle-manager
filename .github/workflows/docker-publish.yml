@@ -27,7 +27,7 @@ jobs:
       - name: Validate timeline checks
         run: |
           python -m compileall -q app.py timeline.py reliability.py ai_queue.py
-          python -m unittest -v test_timeline.py test_reliability.py test_ai_queue.py test_web_html.py
+          python -m unittest -v test_timeline.py test_reliability.py test_ai_queue.py test_web_html.py test_remote_mount.py
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Buildx
