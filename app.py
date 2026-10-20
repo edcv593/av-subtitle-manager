@@ -317,7 +317,7 @@ function el(tag,text){let e=document.createElement(tag);if(text!==undefined)e.te
 function msg(t){document.getElementById("message").textContent=t}
 async function api(path,method="GET",body){let r=await fetch(path,{method,headers:{"X-Auth-Token":token,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});let j=await r.json();if(!r.ok)throw Error(j.detail||r.status);return j}
 function connect(){token=document.getElementById("token").value;sessionStorage.setItem("subtitle_token",token);load()}
-async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");if(["missing","review","error","no_code"].includes(x.status)){let b=el("button","重试");b.onclick=()=>retry(x.path);actions.append(b)}if(x.status==="review"){let b=el("button","候选");b.onclick=()=>show(x.path);actions.append(b)}if(["missing","review","error"].includes(x.status)){let b=el("button","加入 AI 队列");b.onclick=()=>aiAdd(x.path);actions.append(b)}tr.append(name,code,status,actions);tbody.append(tr)}msg(scanInfo(s))}catch(e){msg("刷新失败："+e.message)}}
+async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");if(["missing","review","error","no_code"].includes(x.status)){let b=el("button","重试");b.onclick=()=>retry(x.path);actions.append(b)}if(x.status==="review"){let b=el("button","候选");b.onclick=()=>show(x.path,tr);actions.append(b)}if(["missing","review","error"].includes(x.status)){let b=el("button","加入 AI 队列");b.onclick=()=>aiAdd(x.path);actions.append(b)}tr.append(name,code,status,actions);tbody.append(tr)}msg(scanInfo(s))}catch(e){msg("刷新失败："+e.message)}}
 function scanInfo(s){
  let p=s.scan_progress||{},now=Date.now()/1000;
  let elapsed=p.started_at?Math.floor(((s.scan_running?now:p.finished_at||now)-p.started_at)/60):0;
@@ -345,7 +345,36 @@ async function pollStatus(){
 setInterval(pollStatus,5000);
 async function scan(){try{let r=await api("/api/scan","POST");msg(r.ok?"扫描已启动":r.message)}catch(e){msg(e.message)}}
 async function retry(path){try{await api("/api/retry","POST",{path});load()}catch(e){msg(e.message)}}
-async function show(path){try{let r=await api("/api/candidates?"+new URLSearchParams({path}));let box=document.getElementById("candidates");box.replaceChildren(el("h3",path.split("/").pop()+" 候选字幕"));for(let x of r.items){let d=el("div");d.append(el("span",x.name+" "));let b=el("button","人工确认下载");b.onclick=async()=>{if(!confirm("请确认字幕与影片版本匹配。时间轴校验不通过时仍会下载，是否继续："+x.name+"？"))return;try{await api("/api/download","POST",{path,url:x.url});box.replaceChildren();load()}catch(e){msg(e.message)}};d.append(b);box.append(d)}}catch(e){msg(e.message)}}
+async function show(path,tr){
+ let previous=document.getElementById("activeCandidateRow");
+ if(previous){let same=previous.previousElementSibling===tr;previous.remove();if(same)return}
+ let detail=el("tr");detail.id="activeCandidateRow";
+ let cell=el("td");cell.colSpan=4;cell.style.background="#f7f9fd";cell.style.padding="16px";
+ detail.append(cell);tr.after(detail);
+ cell.append(el("strong","正在加载候选字幕…"));
+ try{
+  let r=await api("/api/candidates?"+new URLSearchParams({path}));
+  if(!detail.isConnected)return;
+  cell.replaceChildren(el("h3",path.split("/").pop()+" · 候选字幕 "+r.items.length+" 个"));
+  if(!r.items.length){cell.append(el("p","暂无可下载候选。可以点击重试重新搜索；不会自动写入网盘。"));return}
+  cell.append(el("p","点击「人工确认下载」才会向影片同目录写入字幕；115 远程模式不验证视频时长，请自行检查同步。"));
+  for(let x of r.items){
+   let d=el("div");d.style.padding="8px 0";d.style.borderTop="1px solid #e3e7ed";
+   d.append(el("span",x.name+" "));
+   let btn=el("button","人工确认下载");
+   btn.onclick=async()=>{
+    if(!confirm("请确认字幕与影片版本匹配。远程挂载模式不验证视频时长，是否继续："+x.name+"？"))return;
+    btn.disabled=true;btn.textContent="正在下载并写入…";
+    try{
+     let result=await api("/api/download","POST",{path,url:x.url});
+     cell.replaceChildren(el("p","字幕写入成功："+result.file));
+     await load();
+    }catch(e){btn.disabled=false;btn.textContent="人工确认下载";cell.append(el("p","下载失败："+e.message));msg("字幕下载失败："+e.message)}
+   };
+   d.append(btn);cell.append(d);
+  }
+ }catch(e){cell.replaceChildren(el("p","候选加载失败："+e.message));msg("候选加载失败："+e.message)}
+}
 async function aiAdd(path){try{let r=await api("/api/ai/jobs","POST",{path});msg(r.created?"已加入 AI 队列":"任务已存在，未重复入队");aiLoad()}catch(e){msg("AI 入队失败："+e.message)}}
 async function aiAction(id,action){try{await api("/api/ai/jobs/"+id+"/action","POST",{action});aiLoad()}catch(e){msg("AI 操作失败："+e.message)}}
 async function aiLoad(){try{let filter=document.getElementById("aiStatus").value;let result=await api("/api/ai/jobs?"+new URLSearchParams({status:filter}));let tbody=document.getElementById("aiRows");tbody.replaceChildren();for(let j of result.items){let tr=el("tr"),name=el("td",j.video_path.split("/").pop()),origin=el("td",j.origin),status=el("td",j.status),actions=el("td");name.title=j.video_path+"\\n"+j.last_error;let available=j.status==="pending"?["pause","cancel"]:j.status==="paused"?["resume","cancel"]:j.status==="failed"?["retry","cancel"]:j.status==="reviewing"?["retry","cancel"]:j.status==="cancelled"?["retry"]:[];for(let action of available){let b=el("button",({pause:"暂停",resume:"恢复",cancel:"取消",retry:"重试"})[action]);b.onclick=()=>aiAction(j.id,action);actions.append(b)}tr.append(name,origin,status,actions);tbody.append(tr)}}catch(e){msg("AI 队列加载失败："+e.message)}}
