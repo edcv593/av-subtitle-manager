@@ -26,8 +26,8 @@ jobs:
           python-version: '3.12'
       - name: Validate timeline checks
         run: |
-          python -m compileall -q app.py timeline.py
-          python -m unittest -v test_timeline.py
+          python -m compileall -q app.py timeline.py reliability.py
+          python -m unittest -v test_timeline.py test_reliability.py
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Buildx
