@@ -1,6 +1,6 @@
 services:
   subtitle-manager:
-    build: .
+    image: ghcr.io/edcv593/av-subtitle-manager:latest
     container_name: av-subtitle-manager
     restart: unless-stopped
     ports:
