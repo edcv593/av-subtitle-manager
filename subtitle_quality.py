@@ -38,7 +38,7 @@ def evaluate(data,ext):
  reasons=[];warnings=[];score=100
  fingerprint=hashlib.sha256(data).hexdigest()
  if not timeline or not cleaned:
-  return {"score":0,"level":"blocked","reasons":["无法解析有效字幕事件或对白"],"warnings":[],"cues":0,"chinese_ratio":0}
+  return {"score":0,"level":"blocked","reasons":["无法解析有效字幕事件或对白"],"warnings":[],"cues":0,"chinese_ratio":0,"sha256":fingerprint}
  if len(timeline)!=len(cleaned):
   warnings.append("部分字幕事件缺少正文或解析不完整")
  invalid=sum(1 for start,end in timeline if end<=start or start<0)
@@ -89,4 +89,4 @@ def evaluate(data,ext):
  score=max(0,min(100,score))
  level="blocked" if score<65 else "review" if score<85 else "recommended"
  if not reasons:reasons.append("未发现明显文本质量问题；不代表与视频对白同步")
- return {"score":score,"level":level,"reasons":reasons,"warnings":warnings,"cues":len(timeline),"chinese_ratio":round(ratio,3),"ads":ads}
+ return {"score":score,"level":level,"reasons":reasons,"warnings":warnings,"cues":len(timeline),"chinese_ratio":round(ratio,3),"ads":ads,"sha256":fingerprint}
