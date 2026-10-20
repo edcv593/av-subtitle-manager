@@ -236,7 +236,7 @@ def candidates(request:Request,path:str):
  auth(request)
  with db() as c:
   video(c,path)
-  return {"items":[dict(r) for r in c.execute("SELECT name,url,ext FROM candidates WHERE path=?",(path,))]}
+  return {"items":[dict(r) for r in c.execute("SELECT name,url,ext FROM candidates WHERE path=?",(path,))],"code":code(Path(path).name)}
 @app.get("/api/subtitles")
 def subtitle_audit(request:Request,path:str):
  auth(request)
@@ -450,6 +450,16 @@ async function show(path,tr){
      catch(e){cell.append(el("p","恢复失败："+e.message));restore.disabled=false}
     };
     d.append(restore);cell.append(d);
+   }
+   if(candidates.code){
+    let panel=el("div");panel.append(el("p","其他字幕来源（人工检索；尚未接入自动下载）"));
+    for(let [name,domain] of [["AVSubtitles","avsubtitles.com"],["Subtitle Cat","subtitlecat.com"],["JAV字幕","javzimu.com"]]){
+     let a=el("a",name+" · 搜索 "+candidates.code);
+     a.href="https://www.google.com/search?"+new URLSearchParams({q:"site:"+domain+" "+candidates.code+" 中文字幕"});
+     a.target="_blank";a.rel="noopener noreferrer";a.style.marginRight="16px";
+     panel.append(a);
+    }
+    cell.append(panel);
    }
    let refresh=el("button","重新搜索迅雷候选");
    refresh.onclick=async()=>{
