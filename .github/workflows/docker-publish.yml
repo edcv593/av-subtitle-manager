@@ -20,6 +20,14 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+      - name: Set up Python for timeline tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate timeline checks
+        run: |
+          python -m compileall -q app.py timeline.py
+          python -m unittest -v test_timeline.py
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Buildx
