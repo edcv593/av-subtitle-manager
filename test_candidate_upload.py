@@ -39,6 +39,14 @@ class UploadTests(unittest.TestCase):
   with self.assertRaisesRegex(ValueError, "过大"):
    extract(zipped([("a.srt", b"a" * (namespace["LIMIT"] + 1))]), "subs.zip", "SSIS-334")
 
+ def test_suspicious_zip_compression_ratio_rejected(self):
+  payload = b"A" * 100000
+  stream = io.BytesIO()
+  with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+   archive.writestr("SSIS-334.srt", payload)
+  with self.assertRaisesRegex(ValueError, "压缩比异常"):
+   extract(stream.getvalue(), "subs.zip", "SSIS-334")
+
  def test_local_candidate_roundtrip_and_tamper_detection(self):
   payload = b"example subtitle"
   digest = hashlib.sha256(payload).hexdigest()
