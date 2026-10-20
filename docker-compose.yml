@@ -16,6 +16,12 @@ services:
       SKIP_C_MARKER: "true"
       CHECK_EMBEDDED: "true"
       SCORE_THRESHOLD: "80"
+      AI_QUEUE_ENABLED: "true"
+      AI_AUTO_ENQUEUE: "false"
+      AI_WORKER_ENABLED: "false"
+      AI_MAX_PENDING: "500"
+      AI_SOURCE_LANGUAGE: "ja"
+      AI_TARGET_LANGUAGE: "zh"
       MAX_DOWNLOAD_MB: "8"
       WEB_TOKEN: "CHANGE_ME_TO_A_LONG_RANDOM_PASSWORD"
     volumes:
