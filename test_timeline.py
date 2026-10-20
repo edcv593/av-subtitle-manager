@@ -14,7 +14,7 @@ class TimelineTests(unittest.TestCase):
   def make_cue(i,seconds):
    a=seconds;b=seconds+2
    def fmt(t):return f"{t//3600:02d}:{(t//60)%60:02d}:{t%60:02d},000"
-   return f"{i}\\n{fmt(a)} --> {fmt(b)}\\nHello\\n\\n"
+   return f"{i}\n{fmt(a)} --> {fmt(b)}\nHello\n\n"
   data="".join(make_cue(i+1,i*10) for i in range(30)).encode()
   result=assess(data,"srt",7200)
   self.assertTrue(result["ok"])
