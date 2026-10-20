@@ -119,11 +119,11 @@ def process(c,p,force=False):
    else:
     check=assess(data,candidate["ext"],video_duration(p))
     points,reason=score(candidate,check)
-    if check["ok"] and points>=SCORE_THRESHOLD:
+    if check["ok"] and not check.get("warnings") and points>=SCORE_THRESHOLD:
      dest=save(p,candidate,data);reset_retry(c,p)
      record(c,p,number,"downloaded",dest+" | score="+str(points)+" | "+reason)
     else:
-     schedule_retry(c,p,number,"review","score="+str(points)+" | "+(check["reason"] if not check["ok"] else reason))
+     schedule_retry(c,p,number,"review","score="+str(points)+" | "+(check["reason"] if (not check["ok"] or check.get("warnings")) else reason))
   else:schedule_retry(c,p,number,"review","Automatic download disabled")
  except FileExistsError:
   reset_retry(c,p);record(c,p,number,"existing","Subtitle already exists")
