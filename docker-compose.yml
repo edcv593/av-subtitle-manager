@@ -1,0 +1,24 @@
+services:
+  subtitle-manager:
+    build: .
+    container_name: av-subtitle-manager
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      TZ: Asia/Shanghai
+      MEDIA_ROOT: /media
+      DATA_ROOT: /data
+      SCAN_HOURS: "6"
+      RETRY_HOURS: "24"
+      FILE_STABLE_MINUTES: "30"
+      AUTO_DOWNLOAD: "true"
+      SKIP_C_MARKER: "true"
+      MAX_DOWNLOAD_MB: "8"
+      WEB_TOKEN: "CHANGE_ME_TO_A_LONG_RANDOM_PASSWORD"
+    volumes:
+      - /请修改为极空间实际影片路径:/media
+      - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
