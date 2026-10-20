@@ -9,12 +9,13 @@ services:
       TZ: Asia/Shanghai
       MEDIA_ROOT: /media
       DATA_ROOT: /data
-      SCAN_HOURS: "6"
+      SCAN_HOURS: "12"
+      REMOTE_MOUNT_MODE: "true"
       RETRY_HOURS: "24"
       FILE_STABLE_MINUTES: "30"
-      AUTO_DOWNLOAD: "true"
+      AUTO_DOWNLOAD: "false"
       SKIP_C_MARKER: "true"
-      CHECK_EMBEDDED: "true"
+      CHECK_EMBEDDED: "false"
       SCORE_THRESHOLD: "80"
       AI_QUEUE_ENABLED: "true"
       AI_AUTO_ENQUEUE: "false"
