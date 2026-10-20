@@ -14,6 +14,8 @@ services:
       FILE_STABLE_MINUTES: "30"
       AUTO_DOWNLOAD: "true"
       SKIP_C_MARKER: "true"
+      CHECK_EMBEDDED: "true"
+      SCORE_THRESHOLD: "80"
       MAX_DOWNLOAD_MB: "8"
       WEB_TOKEN: "CHANGE_ME_TO_A_LONG_RANDOM_PASSWORD"
     volumes:
