@@ -293,7 +293,7 @@ async def upload_candidate(request:Request,path:str,filename:str):
   if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
   if not filename or len(filename)>200:raise HTTPException(400,"文件名无效")
   length=request.headers.get("content-length")
-  if length and int(length)>LIMIT:raise HTTPException(413,"上传文件过大")
+  if length and (not length.isdecimal() or int(length)>LIMIT):raise HTTPException(413,"上传文件过大")
   payload=await request.body()
   if len(payload)>LIMIT:raise HTTPException(413,"上传文件过大")
   try:
@@ -361,7 +361,7 @@ async def replace_subtitle(request:Request):
   if not item:raise HTTPException(404,"候选不存在")
   if len(subtitle_files.subtitles_for(p))!=1:raise HTTPException(409,"必须恰好有一份外挂字幕才能安全替换")
   try:
-   payload=fetch(item["url"],LIMIT)
+   payload=candidate_payload(item["url"],LIMIT)
    if not valid(payload,item["ext"]):raise ValueError("候选字幕格式无效")
    quality=subtitle_quality.evaluate(payload,item["ext"])
    if quality["level"]=="blocked":raise ValueError("字幕质量未通过："+ "；".join(quality["reasons"]))
@@ -392,7 +392,7 @@ async def download(request:Request):
   item=c.execute("SELECT name,url,ext FROM candidates WHERE path=? AND url=?",(path,url)).fetchone()
   if not item:raise HTTPException(404,"Candidate not found")
   try:
-   data=fetch(item["url"],LIMIT)
+   data=candidate_payload(item["url"],LIMIT)
    if not valid(data,item["ext"]):raise ValueError("Invalid subtitle format")
    quality=subtitle_quality.evaluate(data,item["ext"])
    if quality["level"]=="blocked":raise ValueError("字幕质量未通过："+ "；".join(quality["reasons"]))
