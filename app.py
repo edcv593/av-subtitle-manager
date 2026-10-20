@@ -309,6 +309,7 @@ async def discover_external(request:Request):
       try:
        raw=fetch(link,LIMIT)
        filename=Path(urllib.parse.urlsplit(link).path).name
+       if zipfile.is_zipfile(io.BytesIO(raw)):filename+=".zip"
        data,ext=extract_uploaded_subtitle(raw,filename,number)
        if not valid(data,ext):continue
        quality=subtitle_quality.evaluate(data,ext)
