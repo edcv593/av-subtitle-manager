@@ -1,5 +1,6 @@
 """Conservative, AV-aware subtitle text quality checks. No video/audio reads."""
 import re
+import hashlib
 from collections import Counter
 from timeline import cues,decode
 
@@ -35,6 +36,7 @@ def evaluate(data,ext):
  cleaned=[TAG.sub("",x).strip() for x in raw]
  cleaned=[re.sub(r"\s+"," ",x) for x in cleaned if x.strip()]
  reasons=[];warnings=[];score=100
+ fingerprint=hashlib.sha256(data).hexdigest()
  if not timeline or not cleaned:
   return {"score":0,"level":"blocked","reasons":["无法解析有效字幕事件或对白"],"warnings":[],"cues":0,"chinese_ratio":0}
  if len(timeline)!=len(cleaned):
@@ -54,6 +56,10 @@ def evaluate(data,ext):
  if inversions>max(2,len(timeline)*.02):
   score-=25
   reasons.append(f"字幕事件顺序异常（{inversions}处）")
+ if len(cleaned)>=20:
+  awkward=sum(bool(re.search(r"[。！？]\s*[。！？]",line)) for line in cleaned)
+  if awkward/max(len(cleaned),1)>.2:
+   score-=10;reasons.append(f"约{awkward}条字幕有重复标点，疑似机翻后处理问题")
  if len(cleaned)<3:
   score-=25;reasons.append("有效字幕事件极少，需人工确认")
  text="".join(cleaned)
