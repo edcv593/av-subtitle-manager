@@ -2,6 +2,7 @@ import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.p
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
+from timeline import assess,video_duration
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
@@ -62,8 +63,8 @@ def valid(data,ext):
  if ext=="srt":return bool(re.search(r"\d\d:\d\d:\d\d[,\.]\d{3}\s*-->\s*\d\d:\d\d:\d\d",text))
  if ext in ("ass","ssa"):return "[Script Info]" in text and "[Events]" in text
  return text.lstrip().startswith("WEBVTT")
-def save(p,c):
- data=fetch(c["url"],LIMIT)
+def save(p,c,data=None):
+ if data is None:data=fetch(c["url"],LIMIT)
  if not valid(data,c["ext"]):raise ValueError("Invalid subtitle format")
  target=p.with_name(p.stem+".zh."+c["ext"])
  with target.open("xb") as f:f.write(data)
@@ -87,7 +88,15 @@ def process(c,p,force=False):
   c.commit()
   if not matches:record(c,p,number,"missing","No confidently matched subtitle",time.time()+RETRY)
   elif len(matches)>1:record(c,p,number,"review",str(len(matches))+" candidates",time.time()+RETRY)
-  elif AUTO:record(c,p,number,"downloaded",save(p,matches[0]))
+  elif AUTO:
+   candidate=matches[0]
+   data=fetch(candidate["url"],LIMIT)
+   if not valid(data,candidate["ext"]):
+    record(c,p,number,"review","字幕格式无法验证，需人工审核",time.time()+RETRY)
+   else:
+    check=assess(data,candidate["ext"],video_duration(p))
+    if check["ok"]:record(c,p,number,"downloaded",save(p,candidate,data)+" | "+check["reason"])
+    else:record(c,p,number,"review",check["reason"],time.time()+RETRY)
   else:record(c,p,number,"review","Automatic download disabled",time.time()+RETRY)
  except FileExistsError:record(c,p,number,"existing","Subtitle already exists")
  except Exception as e:
@@ -166,14 +175,18 @@ async def download(request:Request):
   item=c.execute("SELECT name,url,ext FROM candidates WHERE path=? AND url=?",(path,url)).fetchone()
   if not item:raise HTTPException(404,"Candidate not found")
   try:
-   dest=save(p,dict(item));record(c,p,code(p.name),"downloaded",dest)
-   return {"ok":True,"file":dest}
+   data=fetch(item["url"],LIMIT)
+   if not valid(data,item["ext"]):raise ValueError("Invalid subtitle format")
+   check=assess(data,item["ext"],video_duration(p))
+   # Manual choice explicitly permits downloading a candidate that needs review.
+   dest=save(p,dict(item),data);record(c,p,code(p.name),"downloaded",dest+" | manual | "+check["reason"])
+   return {"ok":True,"file":dest,"timeline":check}
   except FileExistsError:raise HTTPException(409,"Subtitle already exists")
   except Exception as e:raise HTTPException(502,str(e)[:200])
 @app.get("/",response_class=HTMLResponse)
 def home():
  return HTML
-HTML="""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AV Subtitle Manager</title><style>body{font:15px system-ui;background:#f4f6fa;color:#182434;margin:0}.wrap{max-width:1100px;margin:30px auto;padding:0 16px}h1{font-size:25px}.panel{background:white;border:1px solid #e3e7ed;border-radius:12px;padding:20px;margin:14px 0}button,input,select{padding:9px;border:1px solid #ccd3df;border-radius:7px;font:inherit}button{cursor:pointer}input{min-width:180px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:11px;border-bottom:1px solid #e8ebf0;word-break:break-all}.muted{color:#667}#message{margin:10px 0;color:#345}button{margin:3px}.grid{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#f3f6fb;padding:14px;border-radius:9px;min-width:100px}</style><div class="wrap"><h1>AV Subtitle Manager</h1><div class="panel"><input id="token" type="password" placeholder="输入 WEB_TOKEN"><button onclick="connect()">连接</button><button onclick="scan()">立即扫描</button><p class="muted">仅供局域网使用，令牌保存在浏览器当前会话。</p><div id="message"></div></div><div class="panel"><div class="grid" id="stats"></div></div><div class="panel"><input id="q" placeholder="番号或文件名"><select id="status"><option value="">全部</option><option value="downloaded">已下载</option><option value="existing">已有字幕</option><option value="skipped_c">-C 跳过</option><option value="missing">未找到</option><option value="review">待审核</option><option value="error">失败</option></select><button onclick="load()">查询</button><table><thead><tr><th>影片</th><th>番号</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table><div id="candidates"></div></div></div><script>
+HTML="""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AV Subtitle Manager</title><style>body{font:15px system-ui;background:#f4f6fa;color:#182434;margin:0}.wrap{max-width:1100px;margin:30px auto;padding:0 16px}h1{font-size:25px}.panel{background:white;border:1px solid #e3e7ed;border-radius:12px;padding:20px;margin:14px 0}button,input,select{padding:9px;border:1px solid #ccd3df;border-radius:7px;font:inherit}button{cursor:pointer}input{min-width:180px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:11px;border-bottom:1px solid #e8ebf0;word-break:break-all}.muted{color:#667}#message{margin:10px 0;color:#345}button{margin:3px}.grid{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#f3f6fb;padding:14px;border-radius:9px;min-width:100px}</style><div class="wrap"><h1>AV Subtitle Manager</h1><div class="panel"><input id="token" type="password" placeholder="输入 WEB_TOKEN"><button onclick="connect()">连接</button><button onclick="scan()">立即扫描</button><p class="muted">仅供局域网使用，令牌保存在浏览器当前会话。</p><div id="message"></div></div><div class="panel"><div class="grid" id="stats"></div></div><div class="panel"><input id="q" placeholder="番号或文件名"><select id="status"><option value="">全部</option><option value="downloaded">已下载</option><option value="existing">已有字幕</option><option value="skipped_c">-C 跳过</option><option value="missing">未找到</option><option value="review">待审核/时间轴疑似不匹配</option><option value="error">失败</option></select><button onclick="load()">查询</button><table><thead><tr><th>影片</th><th>番号</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table><div id="candidates"></div></div></div><script>
 let token=sessionStorage.getItem("subtitle_token")||"";document.getElementById("token").value=token;
 function el(tag,text){let e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e}
 function msg(t){document.getElementById("message").textContent=t}
@@ -182,5 +195,5 @@ function connect(){token=document.getElementById("token").value;sessionStorage.s
 async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");if(["missing","review","error","no_code"].includes(x.status)){let b=el("button","重试");b.onclick=()=>retry(x.path);actions.append(b)}if(x.status==="review"){let b=el("button","候选");b.onclick=()=>show(x.path);actions.append(b)}tr.append(name,code,status,actions);tbody.append(tr)}msg("目录："+s.media+" · "+(s.scan_running?"正在扫描":"空闲"))}catch(e){msg("连接失败："+e.message)}}
 async function scan(){try{let r=await api("/api/scan","POST");msg(r.ok?"扫描已启动":r.message)}catch(e){msg(e.message)}}
 async function retry(path){try{await api("/api/retry","POST",{path});load()}catch(e){msg(e.message)}}
-async function show(path){try{let r=await api("/api/candidates?"+new URLSearchParams({path}));let box=document.getElementById("candidates");box.replaceChildren(el("h3",path.split("/").pop()+" 候选字幕"));for(let x of r.items){let d=el("div");d.append(el("span",x.name+" "));let b=el("button","下载此字幕");b.onclick=async()=>{if(!confirm("下载 "+x.name+"？"))return;try{await api("/api/download","POST",{path,url:x.url});box.replaceChildren();load()}catch(e){msg(e.message)}};d.append(b);box.append(d)}}catch(e){msg(e.message)}}
+async function show(path){try{let r=await api("/api/candidates?"+new URLSearchParams({path}));let box=document.getElementById("candidates");box.replaceChildren(el("h3",path.split("/").pop()+" 候选字幕"));for(let x of r.items){let d=el("div");d.append(el("span",x.name+" "));let b=el("button","人工确认下载");b.onclick=async()=>{if(!confirm("请确认字幕与影片版本匹配。时间轴校验不通过时仍会下载，是否继续："+x.name+"？"))return;try{await api("/api/download","POST",{path,url:x.url});box.replaceChildren();load()}catch(e){msg(e.message)}};d.append(b);box.append(d)}}catch(e){msg(e.message)}}
 </script></html>"""
