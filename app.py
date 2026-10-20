@@ -144,8 +144,15 @@ def process(c,p,force=False):
  except Exception as e:
   log.warning("%s: %s",p,e);schedule_retry(c,p,number,"error",str(e)[:300])
 
+scan_progress={"started_at":None,"last_processed_at":None,"current_file":"","processed":0,"changed":0,"errors":0,"finished_at":None}
+progress_lock=threading.Lock()
+def progress_snapshot():
+ with progress_lock:return dict(scan_progress)
+def progress_update(**fields):
+ with progress_lock:scan_progress.update(fields)
 def scan():
  if not lock.acquire(False):return False
+ progress_update(started_at=time.time(),last_processed_at=None,current_file="",processed=0,changed=0,errors=0,finished_at=None)
  try:
   c=db()
   try:
@@ -153,12 +160,29 @@ def scan():
     for name in files:
      p=Path(root)/name
      if p.suffix.lower() not in VIDEO:continue
-     try:process(c,p)
-     except Exception:log.exception("Scan error: %s",p)
+     with progress_lock:
+      scan_progress["current_file"]=p.name
+     try:
+      before=c.execute("SELECT updated FROM videos WHERE path=?",(str(p),)).fetchone()
+      process(c,p)
+      after=c.execute("SELECT updated FROM videos WHERE path=?",(str(p),)).fetchone()
+      changed=bool(after and (not before or after["updated"]!=before["updated"]))
+      with progress_lock:
+       scan_progress["processed"]+=1
+       scan_progress["changed"]+=int(changed)
+       scan_progress["last_processed_at"]=time.time()
+     except Exception:
+      log.exception("Scan error: %s",p)
+      with progress_lock:
+       scan_progress["processed"]+=1
+       scan_progress["errors"]+=1
+       scan_progress["last_processed_at"]=time.time()
      time.sleep(.1)
   finally:c.close()
   return True
- finally:lock.release()
+ finally:
+  progress_update(finished_at=time.time(),current_file="")
+  lock.release()
 def loop():
  while True:
   try:scan()
@@ -180,7 +204,7 @@ def video(c,path):
 def status(request:Request):
  auth(request)
  with db() as c:
-  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"media":str(MEDIA),"auto":AUTO,"score_threshold":SCORE_THRESHOLD,"ai_queue_enabled":AI_QUEUE_ENABLED,"ai_auto_enqueue":AI_AUTO_ENQUEUE,"ai_worker_enabled":AI_WORKER_ENABLED}
+  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"scan_progress":progress_snapshot(),"media":str(MEDIA),"auto":AUTO,"score_threshold":SCORE_THRESHOLD,"ai_queue_enabled":AI_QUEUE_ENABLED,"ai_auto_enqueue":AI_AUTO_ENQUEUE,"ai_worker_enabled":AI_WORKER_ENABLED}
 @app.get("/api/videos")
 def videos(request:Request,q:str="",status:str=""):
  auth(request)
