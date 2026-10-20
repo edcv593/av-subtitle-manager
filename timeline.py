@@ -56,7 +56,7 @@ def assess(data,ext,duration):
   if a<0 or b<=a:return {"ok":False,"reason":"字幕时间戳无效","cues":len(timeline)}
   if b-a>900:return {"ok":False,"reason":"字幕单条跨度异常","cues":len(timeline)}
  last=max(b for _,b in timeline)
- if last>duration+max(15,duration*.02):
+ if last>duration+min(15,duration*.02):
   return {"ok":False,"reason":f"字幕结束于{last:.0f}秒，超出视频时长{duration:.0f}秒","cues":len(timeline)}
  # Sparse/partial subtitles are legitimate; do not reject solely for early ending.
  # Detect severe non-monotonic ordering, not normal overlapping dialogue.
