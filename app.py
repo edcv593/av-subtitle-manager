@@ -374,7 +374,7 @@ function el(tag,text){let e=document.createElement(tag);if(text!==undefined)e.te
 function msg(t){document.getElementById("message").textContent=t}
 async function api(path,method="GET",body){let r=await fetch(path,{method,headers:{"X-Auth-Token":token,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});let j=await r.json();if(!r.ok)throw Error(j.detail||r.status);return j}
 function connect(){token=document.getElementById("token").value;sessionStorage.setItem("subtitle_token",token);load()}
-async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");if(["missing","review","error","no_code"].includes(x.status)){let b=el("button","重试");b.onclick=()=>retry(x.path);actions.append(b)}if(x.status==="review"){let b=el("button","候选");b.onclick=()=>show(x.path,tr);actions.append(b)}if(["missing","review","error"].includes(x.status)){let b=el("button","加入 AI 队列");b.onclick=()=>aiAdd(x.path);actions.append(b)}tr.append(name,code,status,actions);tbody.append(tr)}msg(scanInfo(s))}catch(e){msg("刷新失败："+e.message)}}
+async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");if(["missing","review","error","no_code"].includes(x.status)){let b=el("button","重试");b.onclick=()=>retry(x.path);actions.append(b)}if(["review","downloaded","existing"].includes(x.status)){let b=el("button","字幕审核");b.onclick=()=>show(x.path,tr);actions.append(b)}if(["missing","review","error"].includes(x.status)){let b=el("button","加入 AI 队列");b.onclick=()=>aiAdd(x.path);actions.append(b)}tr.append(name,code,status,actions);tbody.append(tr)}msg(scanInfo(s))}catch(e){msg("刷新失败："+e.message)}}
 function scanInfo(s){
  let p=s.scan_progress||{},now=Date.now()/1000;
  let elapsed=p.started_at?Math.floor(((s.scan_running?now:p.finished_at||now)-p.started_at)/60):0;
@@ -403,34 +403,64 @@ setInterval(pollStatus,5000);
 async function scan(){try{let r=await api("/api/scan","POST");msg(r.ok?"扫描已启动":r.message)}catch(e){msg(e.message)}}
 async function retry(path){try{await api("/api/retry","POST",{path});load()}catch(e){msg(e.message)}}
 async function show(path,tr){
- let previous=document.getElementById("activeCandidateRow");
- if(previous){let same=previous.previousElementSibling===tr;previous.remove();if(same)return}
+ let prev=document.getElementById("activeCandidateRow");
+ if(prev){let same=prev.previousElementSibling===tr;prev.remove();if(same)return}
  let detail=el("tr");detail.id="activeCandidateRow";
  let cell=el("td");cell.colSpan=4;cell.style.background="#f7f9fd";cell.style.padding="16px";
  detail.append(cell);tr.after(detail);
- cell.append(el("strong","正在加载候选字幕…"));
- try{
-  let r=await api("/api/candidates?"+new URLSearchParams({path}));
-  if(!detail.isConnected)return;
-  cell.replaceChildren(el("h3",path.split("/").pop()+" · 候选字幕 "+r.items.length+" 个"));
-  if(!r.items.length){cell.append(el("p","暂无可下载候选。可以点击重试重新搜索；不会自动写入网盘。"));return}
-  cell.append(el("p","点击「人工确认下载」才会向影片同目录写入字幕；115 远程模式不验证视频时长，请自行检查同步。"));
-  for(let x of r.items){
-   let d=el("div");d.style.padding="8px 0";d.style.borderTop="1px solid #e3e7ed";
-   d.append(el("span",x.name+" "));
-   let btn=el("button","人工确认下载");
-   btn.onclick=async()=>{
-    if(!confirm("请确认字幕与影片版本匹配。远程挂载模式不验证视频时长，是否继续："+x.name+"？"))return;
-    btn.disabled=true;btn.textContent="正在下载并写入…";
-    try{
-     let result=await api("/api/download","POST",{path,url:x.url});
-     cell.replaceChildren(el("p","字幕写入成功："+result.file));
-     await load();
-    }catch(e){btn.disabled=false;btn.textContent="人工确认下载";cell.append(el("p","下载失败："+e.message));msg("字幕下载失败："+e.message)}
+ async function render(){
+  cell.replaceChildren(el("p","正在读取字幕和候选…"));
+  try{
+   let [subs,candidates]=await Promise.all([
+    api("/api/subtitles?"+new URLSearchParams({path})),
+    api("/api/candidates?"+new URLSearchParams({path}))
+   ]);
+   if(!detail.isConnected)return;
+   cell.replaceChildren(el("h3",path.split("/").pop()+" · 字幕审核"));
+   if(!subs.items.length)cell.append(el("p","当前没有外挂字幕。"));
+   for(let sub of subs.items){
+    cell.append(el("p","现有字幕："+sub.name+" · "+(sub.error||((sub.valid?"格式有效":"格式异常")+" · "+sub.timeline.reason))));
+   }
+   if(subs.items.length)cell.append(el("p","提示：时间轴检查不能确认对白同步，建议在播放器中实际试看。"));
+   for(let name of subs.backups){
+    let d=el("div","备份："+name+" ");
+    let restore=el("button","恢复此备份");
+    restore.onclick=async()=>{
+     if(!confirm("确认恢复旧字幕？当前字幕也会保留备份。"))return;
+     restore.disabled=true;
+     try{let out=await api("/api/subtitles/restore","POST",{path,backup:name});msg("已恢复："+out.file);await load()}
+     catch(e){cell.append(el("p","恢复失败："+e.message));restore.disabled=false}
+    };
+    d.append(restore);cell.append(d);
+   }
+   let refresh=el("button","重新搜索迅雷候选");
+   refresh.onclick=async()=>{
+    refresh.disabled=true;refresh.textContent="正在搜索…";
+    try{await api("/api/candidates/refresh","POST",{path});await render()}
+    catch(e){cell.append(el("p","搜索失败："+e.message));refresh.disabled=false;refresh.textContent="重新搜索迅雷候选"}
    };
-   d.append(btn);cell.append(d);
-  }
- }catch(e){cell.replaceChildren(el("p","候选加载失败："+e.message));msg("候选加载失败："+e.message)}
+   cell.append(refresh);
+   cell.append(el("p","迅雷候选："+candidates.items.length+" 个"));
+   if(!candidates.items.length)cell.append(el("p","暂无候选，可点击重新搜索。"));
+   for(let x of candidates.items){
+    let d=el("div");d.style.padding="8px 0";d.style.borderTop="1px solid #e3e7ed";
+    d.append(el("span",x.name+" "));
+    let btn=el("button",subs.items.length?"备份旧字幕并更换":"人工确认下载");
+    btn.onclick=async()=>{
+     if(!confirm("远程挂载模式不验证视频时长。请确认字幕与影片匹配；如有旧字幕将先备份。继续？"))return;
+     btn.disabled=true;btn.textContent="正在下载并写入…";
+     try{
+      let endpoint=subs.items.length?"/api/subtitles/replace":"/api/download";
+      let out=await api(endpoint,"POST",{path,url:x.url});
+      msg("字幕保存成功："+out.file+(out.backup?"；旧字幕备份："+out.backup:""));
+      await load();
+     }catch(e){cell.append(el("p","操作失败："+e.message));msg("字幕操作失败："+e.message);btn.disabled=false;btn.textContent="重试下载"}
+    };
+    d.append(btn);cell.append(d);
+   }
+  }catch(e){cell.replaceChildren(el("p","字幕审核加载失败："+e.message));msg("字幕审核失败："+e.message)}
+ }
+ await render();
 }
 async function aiAdd(path){try{let r=await api("/api/ai/jobs","POST",{path});msg(r.created?"已加入 AI 队列":"任务已存在，未重复入队");aiLoad()}catch(e){msg("AI 入队失败："+e.message)}}
 async function aiAction(id,action){try{await api("/api/ai/jobs/"+id+"/action","POST",{action});aiLoad()}catch(e){msg("AI 操作失败："+e.message)}}
