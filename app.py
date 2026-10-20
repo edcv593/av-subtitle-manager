@@ -73,6 +73,7 @@ def extract_uploaded_subtitle(data,filename,number):
    if len(infos)!=1:raise ValueError("ZIP 必须恰好包含一个字幕文件")
    info=infos[0]
    if info.file_size>LIMIT or info.compress_size>LIMIT:raise ValueError("字幕过大")
+   if info.file_size>0 and info.compress_size>0 and info.file_size>info.compress_size*200:raise ValueError("ZIP 压缩比异常")
    if info.flag_bits & 1:raise ValueError("不支持加密 ZIP")
    with archive.open(info) as f:payload=f.read(LIMIT+1)
    if len(payload)>LIMIT:raise ValueError("字幕过大")
@@ -296,8 +297,12 @@ async def upload_candidate(request:Request,path:str,filename:str):
   if not filename or len(filename)>200:raise HTTPException(400,"文件名无效")
   length=request.headers.get("content-length")
   if length and (not length.isdecimal() or int(length)>LIMIT):raise HTTPException(413,"上传文件过大")
-  payload=await request.body()
-  if len(payload)>LIMIT:raise HTTPException(413,"上传文件过大")
+  chunks=[];total=0
+  async for chunk in request.stream():
+   total+=len(chunk)
+   if total>LIMIT:raise HTTPException(413,"上传文件过大")
+   chunks.append(chunk)
+  payload=b"".join(chunks)
   try:
    data,ext=extract_uploaded_subtitle(payload,filename,number)
    if not valid(data,ext):raise ValueError("字幕格式无效")
