@@ -125,7 +125,7 @@ def process(c,p,force=False,directory_names=None):
  try:
   matches=normalize(search(number),number)
   c.execute("DELETE FROM candidates WHERE path=? AND source=?",(str(p),"迅雷"))
-  for item in matches:c.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,?,?)",(str(p),item["name"],item["url"],item["ext"]))
+  for item in matches:c.execute("INSERT OR IGNORE INTO candidates(path,name,url,ext) VALUES(?,?,?,?)",(str(p),item["name"],item["url"],item["ext"]))
   c.commit()
   if not matches:
    schedule_retry(c,p,number,"missing","No confidently matched subtitle")
