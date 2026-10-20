@@ -63,4 +63,17 @@ def assess(data,ext,duration):
  inversions=sum(1 for i in range(1,len(timeline)) if timeline[i][0]+3<timeline[i-1][0])
  if inversions>max(2,len(timeline)*.02):
   return {"ok":False,"reason":"字幕事件顺序明显异常","cues":len(timeline)}
- return {"ok":True,"reason":f"时间轴基本合理：{len(timeline)}条，结束{last:.0f}秒/视频{duration:.0f}秒；不保证内容同步","cues":len(timeline)}
+ # Long-form diagnostics are informational: silence, partial translations and chapter breaks are valid.
+ ordered=sorted(timeline,key=lambda cue:cue[0])
+ thirds=[sum(1 for start,_ in timeline if min(start/duration,0.999999)<(i+1)/3 and start/duration>=i/3) for i in range(3)]
+ gaps=[max(0,ordered[i][0]-ordered[i-1][1]) for i in range(1,len(ordered))]
+ longest_gap=max(gaps,default=0)
+ warnings=[]
+ if duration>=3600:
+  if len(timeline)>=15 and any(n==0 for n in thirds):
+   warnings.append("部分时段没有字幕事件，可能是局部翻译或长时间无对白")
+  if longest_gap>=max(900,duration*.2):
+   warnings.append(f"最长无字幕间隔约{longest_gap/60:.0f}分钟")
+ reason=f"时间轴基本合理：{len(timeline)}条，结束{last:.0f}秒/视频{duration:.0f}秒；不保证内容同步"
+ if warnings:reason+="；提示："+"；".join(warnings)
+ return {"ok":True,"reason":reason,"cues":len(timeline),"thirds":thirds,"longest_gap_seconds":round(longest_gap,1),"warnings":warnings}
