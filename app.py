@@ -12,6 +12,7 @@ AGE=max(0,int(os.getenv("FILE_STABLE_MINUTES","30")))*60;LIMIT=int(os.getenv("MA
 SKIP_C=os.getenv("SKIP_C_MARKER","true").lower()=="true"
 SCORE_THRESHOLD=max(0,min(100,int(os.getenv("SCORE_THRESHOLD","80"))))
 CHECK_EMBEDDED=os.getenv("CHECK_EMBEDDED","true").lower()=="true"
+REMOTE_MOUNT_MODE=os.getenv("REMOTE_MOUNT_MODE","false").lower()=="true"
 AI_QUEUE_ENABLED=os.getenv("AI_QUEUE_ENABLED","true").lower()=="true"
 AI_AUTO_ENQUEUE=os.getenv("AI_AUTO_ENQUEUE","false").lower()=="true"
 AI_WORKER_ENABLED=os.getenv("AI_WORKER_ENABLED","false").lower()=="true"
@@ -30,9 +31,10 @@ def code(name):
  m=re.search(r"(?<![A-Z0-9])([A-Z]{2,8})[-_. ]*(\d{2,6})(?!\d)",Path(name).stem.upper())
  return m.group(1)+"-"+m.group(2) if m else None
 def marked(name):return bool(re.search(r"(?:^|[-_.\s])C(?:$|[-_.\s])",Path(name).stem.upper()))
-def sidecar(p):
+def sidecar(p,names=None):
  stem=p.stem.casefold()
- return any(q.is_file() and q.suffix.lower() in SUB and (q.stem.casefold()==stem or q.stem.casefold().startswith(stem+".") or q.stem.casefold().startswith(stem+"-")) for q in p.parent.iterdir())
+ if names is None:names=[q.name for q in p.parent.iterdir() if q.is_file()]
+ return any(Path(name).suffix.lower() in SUB and (Path(name).stem.casefold()==stem or Path(name).stem.casefold().startswith(stem+".") or Path(name).stem.casefold().startswith(stem+"-")) for name in names)
 class NoRedirect(urllib.request.HTTPRedirectHandler):
  def redirect_request(self,*a,**k):raise ValueError("Redirect blocked")
 def fetch(url,limit=2097152):
@@ -97,7 +99,7 @@ def schedule_retry(c,p,number,status,detail):
  record(c,p,number,status,detail,next_retry(status,attempts,RETRY/3600))
 def reset_retry(c,p):
  c.execute("DELETE FROM retry_attempts WHERE path=?",(str(p),));c.commit()
-def process(c,p,force=False):
+def process(c,p,force=False,directory_names=None):
  number=code(p.name)
  st=p.stat()
  old=c.execute("SELECT * FROM videos WHERE path=?",(str(p),)).fetchone()
@@ -105,7 +107,7 @@ def process(c,p,force=False):
  if not force and should_skip(old,st):return
  if SKIP_C and marked(p.name):
   reset_retry(c,p);record(c,p,number,"skipped_c","Filename contains -C");return
- if sidecar(p):
+ if sidecar(p,directory_names):
   reset_retry(c,p);record(c,p,number,"existing","Sidecar subtitle found");return
  if not number:
   reset_retry(c,p);record(c,p,None,"no_code","Cannot parse code");return
@@ -131,7 +133,7 @@ def process(c,p,force=False):
    if not valid(data,candidate["ext"]):
     schedule_retry(c,p,number,"review","字幕格式无法验证，需人工审核")
    else:
-    check=assess(data,candidate["ext"],video_duration(p))
+    check=assess(data,candidate["ext"],None if REMOTE_MOUNT_MODE else video_duration(p))
     points,reason=score(candidate,check)
     if check["ok"] and not check.get("warnings") and points>=SCORE_THRESHOLD:
      dest=save(p,candidate,data);reset_retry(c,p)
@@ -164,7 +166,7 @@ def scan():
       scan_progress["current_file"]=p.name
      try:
       before=c.execute("SELECT updated FROM videos WHERE path=?",(str(p),)).fetchone()
-      process(c,p)
+      process(c,p,directory_names=files if REMOTE_MOUNT_MODE else None)
       after=c.execute("SELECT updated FROM videos WHERE path=?",(str(p),)).fetchone()
       changed=bool(after and (not before or after["updated"]!=before["updated"]))
       with progress_lock:
@@ -204,7 +206,7 @@ def video(c,path):
 def status(request:Request):
  auth(request)
  with db() as c:
-  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"scan_progress":progress_snapshot(),"media":str(MEDIA),"auto":AUTO,"score_threshold":SCORE_THRESHOLD,"ai_queue_enabled":AI_QUEUE_ENABLED,"ai_auto_enqueue":AI_AUTO_ENQUEUE,"ai_worker_enabled":AI_WORKER_ENABLED}
+  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"remote_mount_mode":REMOTE_MOUNT_MODE,"scan_progress":progress_snapshot(),"media":str(MEDIA),"auto":AUTO,"score_threshold":SCORE_THRESHOLD,"ai_queue_enabled":AI_QUEUE_ENABLED,"ai_auto_enqueue":AI_AUTO_ENQUEUE,"ai_worker_enabled":AI_WORKER_ENABLED}
 @app.get("/api/videos")
 def videos(request:Request,q:str="",status:str=""):
  auth(request)
@@ -245,7 +247,7 @@ async def download(request:Request):
   try:
    data=fetch(item["url"],LIMIT)
    if not valid(data,item["ext"]):raise ValueError("Invalid subtitle format")
-   check=assess(data,item["ext"],video_duration(p))
+   check=assess(data,item["ext"],None if REMOTE_MOUNT_MODE else video_duration(p))
    # Manual choice explicitly permits downloading a candidate that needs review.
    dest=save(p,dict(item),data);reset_retry(c,p);record(c,p,code(p.name),"downloaded",dest+" | manual | "+check["reason"])
    return {"ok":True,"file":dest,"timeline":check}
