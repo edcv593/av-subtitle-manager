@@ -437,7 +437,7 @@ async function show(path,tr){
    cell.replaceChildren(el("h3",path.split("/").pop()+" · 字幕审核"));
    if(!subs.items.length)cell.append(el("p","当前没有外挂字幕。"));
    for(let sub of subs.items){
-    cell.append(el("p","现有字幕："+sub.name+" · "+(sub.error||((sub.valid?"格式有效":"格式异常")+" · "+sub.timeline.reason))));
+    cell.append(el("p","现有字幕："+sub.name+" · "+(sub.error||((sub.valid?"格式有效":"格式异常")+" · 质量 "+(sub.quality?sub.quality.score:"?")+" 分 · "+(sub.quality?sub.quality.reasons.join("；"):"")+" · "+sub.timeline.reason))));
    }
    if(subs.items.length)cell.append(el("p","提示：时间轴检查不能确认对白同步，建议在播放器中实际试看。"));
    for(let name of subs.backups){
@@ -474,7 +474,18 @@ async function show(path,tr){
       await load();
      }catch(e){cell.append(el("p","操作失败："+e.message));msg("字幕操作失败："+e.message);btn.disabled=false;btn.textContent="重试下载"}
     };
-    d.append(btn);cell.append(d);
+    let qb=el("button","分析质量");
+    qb.onclick=async()=>{
+     qb.disabled=true;qb.textContent="分析中…";
+     try{
+      let q=await api("/api/candidates/quality","POST",{path,url:x.url});
+      d.append(el("p","质量 "+q.score+" 分 · "+q.level+" · "+q.reasons.join("；")));
+      if(q.warnings&&q.warnings.length)d.append(el("p","提示："+q.warnings.join("；")));
+      if(q.level==="blocked"){btn.disabled=true;btn.textContent="低质量已拦截"}
+      qb.remove();
+     }catch(e){d.append(el("p","分析失败："+e.message));qb.disabled=false;qb.textContent="重新分析"}
+    };
+    d.append(qb,btn);cell.append(d);
    }
   }catch(e){cell.replaceChildren(el("p","字幕审核加载失败："+e.message));msg("字幕审核失败："+e.message)}
  }
