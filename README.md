@@ -43,6 +43,12 @@ services:
       SKIP_C_MARKER: "true"
       CHECK_EMBEDDED: "true"
       SCORE_THRESHOLD: "80"
+      AI_QUEUE_ENABLED: "true"
+      AI_AUTO_ENQUEUE: "false"
+      AI_WORKER_ENABLED: "false"
+      AI_MAX_PENDING: "500"
+      AI_SOURCE_LANGUAGE: "ja"
+      AI_TARGET_LANGUAGE: "zh"
       MAX_DOWNLOAD_MB: "8"
       WEB_TOKEN: "CHANGE_ME_TO_A_LONG_RANDOM_PASSWORD"
     volumes:
@@ -54,6 +60,22 @@ services:
 ```
 
 `./data` 目录持久化 SQLite 数据库。极空间的 Compose 项目需要正确支持相对路径；如不支持，请把 `./data` 改成 NAS 上的绝对路径。
+
+## AI 备用字幕任务队列（仅排队，不运行 AI）
+
+本阶段新增 `ai_queue.py`，使用现有 `/data/subtitle.db` 持久化任务，**不安装 Whisper、不会提取音频、不会生成或翻译字幕**。极空间无需 GPU、Redis 或第二个容器。
+
+- `AI_QUEUE_ENABLED: "true"`：启用队列 API 与 Web 页面。
+- `AI_AUTO_ENQUEUE: "false"`：默认仅在影片列表中手动点击“加入 AI 队列”。设为 `"true"` 后，仅当迅雷搜索返回**没有可靠候选**时尝试入队；多个候选、时间轴可疑等情况仍优先人工审核。
+- `AI_WORKER_ENABLED: "false"`：未来 Worker 领取/心跳/状态接口默认不可用。
+- `AI_MAX_PENDING: "500"`：限制未完成任务数量。
+- `AI_SOURCE_LANGUAGE` / `AI_TARGET_LANGUAGE`：预留配置，当前任务固定记录 `ja` → `zh`，**尚未接入翻译或语言设置功能**。
+
+任务按照视频路径、大小、修改时间去重；视频版本变化时，旧的未完成任务会标记取消。可以在 Web 页面查看、暂停、恢复、取消或重试。任务状态包含 `pending`、`claimed`、`extracting`、`transcribing`、`translating`、`reviewing`、`completed`、`failed`、`cancelled`、`paused`。本阶段实际新增的任务只会进入 `pending`，除非未来显式开启 Worker 接口。
+
+**预留 Worker API（不建议现在开启）**：`POST /api/ai/worker/claim`、`POST /api/ai/worker/{job_id}/heartbeat`、`POST /api/ai/worker/{job_id}/transition`。采用 SQLite 原子领取和租约超时恢复，所有请求使用现有 `X-Auth-Token`；尚未实现独立 Worker 身份、字幕上传与安全发布、音频处理、任务完成确认等生产功能。请保持 `AI_WORKER_ENABLED=false`，不要向公网开放。即使将来开启，当前版本也不会自行运行 AI 推理。
+
+自动入队会尊重 `-C` 跳过、已有外挂字幕及可识别的内嵌中文字幕。已有索引的影片可通过 Web 列表手动入队；新视频需要先被正常扫描索引。后台周期扫描不删除已消失影片的历史任务记录。
 
 ## 增强模式：时长和时间轴校验
 
