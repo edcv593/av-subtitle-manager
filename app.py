@@ -291,7 +291,21 @@ function el(tag,text){let e=document.createElement(tag);if(text!==undefined)e.te
 function msg(t){document.getElementById("message").textContent=t}
 async function api(path,method="GET",body){let r=await fetch(path,{method,headers:{"X-Auth-Token":token,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});let j=await r.json();if(!r.ok)throw Error(j.detail||r.status);return j}
 function connect(){token=document.getElementById("token").value;sessionStorage.setItem("subtitle_token",token);load()}
-async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");if(["missing","review","error","no_code"].includes(x.status)){let b=el("button","重试");b.onclick=()=>retry(x.path);actions.append(b)}if(x.status==="review"){let b=el("button","候选");b.onclick=()=>show(x.path);actions.append(b)}if(["missing","review","error"].includes(x.status)){let b=el("button","加入 AI 队列");b.onclick=()=>aiAdd(x.path);actions.append(b)}tr.append(name,code,status,actions);tbody.append(tr)}msg("目录："+s.media+" · "+(s.scan_running?"正在扫描":"空闲"))}catch(e){msg("连接失败："+e.message)}}
+async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");if(["missing","review","error","no_code"].includes(x.status)){let b=el("button","重试");b.onclick=()=>retry(x.path);actions.append(b)}if(x.status==="review"){let b=el("button","候选");b.onclick=()=>show(x.path);actions.append(b)}if(["missing","review","error"].includes(x.status)){let b=el("button","加入 AI 队列");b.onclick=()=>aiAdd(x.path);actions.append(b)}tr.append(name,code,status,actions);tbody.append(tr)}msg("目录："+s.media+" · "+(s.scan_running?"正在扫描":"空闲")+" · 更新于 "+new Date().toLocaleTimeString())}catch(e){msg("刷新失败："+e.message)}}
+let lastScanRunning=null;
+async function pollStatus(){
+ if(!token)return;
+ try{
+  let s=await api("/api/status");
+  let wasRunning=lastScanRunning;
+  lastScanRunning=s.scan_running;
+  msg("目录："+s.media+" · "+(s.scan_running?"正在扫描":"空闲")+" · 状态更新 "+new Date().toLocaleTimeString());
+  let stats=document.getElementById("stats");stats.replaceChildren();
+  for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}
+  if(wasRunning===true && !s.scan_running)await load();
+ }catch(e){msg("状态更新失败："+e.message)}
+}
+setInterval(pollStatus,5000);
 async function scan(){try{let r=await api("/api/scan","POST");msg(r.ok?"扫描已启动":r.message)}catch(e){msg(e.message)}}
 async function retry(path){try{await api("/api/retry","POST",{path});load()}catch(e){msg(e.message)}}
 async function show(path){try{let r=await api("/api/candidates?"+new URLSearchParams({path}));let box=document.getElementById("candidates");box.replaceChildren(el("h3",path.split("/").pop()+" 候选字幕"));for(let x of r.items){let d=el("div");d.append(el("span",x.name+" "));let b=el("button","人工确认下载");b.onclick=async()=>{if(!confirm("请确认字幕与影片版本匹配。时间轴校验不通过时仍会下载，是否继续："+x.name+"？"))return;try{await api("/api/download","POST",{path,url:x.url});box.replaceChildren();load()}catch(e){msg(e.message)}};d.append(b);box.append(d)}}catch(e){msg(e.message)}}
