@@ -85,8 +85,8 @@ def save(p,c,data=None):
 def record(c,p,number,status,detail="",retry=0):
  st=p.stat()
  c.execute("INSERT OR REPLACE INTO videos VALUES(?,?,?,?,?,?,?,?)",(str(p),number,status,detail,time.time(),st.st_size,st.st_mtime,retry));c.commit()
-def maybe_ai_enqueue(c,p):
- if not AI_QUEUE_ENABLED or not AI_AUTO_ENQUEUE or not code(p.name) or (SKIP_C and marked(p.name)) or sidecar(p):return
+def maybe_ai_enqueue(c,p,directory_names=None):
+ if not AI_QUEUE_ENABLED or not AI_AUTO_ENQUEUE or not code(p.name) or (SKIP_C and marked(p.name)) or sidecar(p,directory_names):return
  try:
   st=p.stat()
   if CHECK_EMBEDDED and embedded_chinese(p)[0] is not False:return
@@ -124,7 +124,7 @@ def process(c,p,force=False,directory_names=None):
   c.commit()
   if not matches:
    schedule_retry(c,p,number,"missing","No confidently matched subtitle")
-   maybe_ai_enqueue(c,p)
+   maybe_ai_enqueue(c,p,directory_names)
   elif len(matches)>1:
    schedule_retry(c,p,number,"review",str(len(matches))+" candidates; manual review")
   elif AUTO:
