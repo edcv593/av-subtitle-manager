@@ -39,11 +39,21 @@ def evaluate(data,ext):
   return {"score":0,"level":"blocked","reasons":["无法解析有效字幕事件或对白"],"warnings":[],"cues":0,"chinese_ratio":0}
  if len(timeline)!=len(cleaned):
   warnings.append("部分字幕事件缺少正文或解析不完整")
- if any(b<=a or a<0 or b-a>900 for a,b in timeline):
-  return {"score":0,"level":"blocked","reasons":["存在无效或超长时间戳"],"warnings":warnings,"cues":len(timeline),"chinese_ratio":0}
+ invalid=sum(1 for start,end in timeline if end<=start or start<0)
+ long=sum(1 for start,end in timeline if end-start>900)
+ if invalid:
+  score-=min(45,15+invalid*5)
+  reasons.append(f"发现{invalid}条结束时间不晚于开始时间的字幕")
+ if long:
+  score-=min(20,5+long*2)
+  warnings.append(f"发现{long}条显示超过15分钟的字幕，可能是片头或制作信息")
+ if invalid/max(len(timeline),1)>.1 and invalid>=3:
+  score=min(score,60)
+  reasons.append("异常时间戳比例较高，需更换或修复")
  inversions=sum(1 for i in range(1,len(timeline)) if timeline[i][0]+3<timeline[i-1][0])
  if inversions>max(2,len(timeline)*.02):
-  return {"score":0,"level":"blocked","reasons":["字幕时间顺序严重异常"],"warnings":warnings,"cues":len(timeline),"chinese_ratio":0}
+  score-=25
+  reasons.append(f"字幕事件顺序异常（{inversions}处）")
  if len(cleaned)<3:
   score-=25;reasons.append("有效字幕事件极少，需人工确认")
  text="".join(cleaned)
