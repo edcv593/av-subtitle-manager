@@ -6,6 +6,7 @@ from timeline import assess,video_duration
 from reliability import embedded_chinese,score,should_skip,next_retry
 import ai_queue
 import subtitle_files
+import subtitle_quality
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
@@ -80,6 +81,7 @@ def valid(data,ext):
 def save(p,c,data=None):
  if data is None:data=fetch(c["url"],LIMIT)
  if not valid(data,c["ext"]):raise ValueError("Invalid subtitle format")
+ if subtitle_quality.evaluate(data,c["ext"])["level"]=="blocked":raise ValueError("Subtitle quality blocked")
  target=p.with_name(p.stem+".zh."+c["ext"])
  with target.open("xb") as f:f.write(data)
  return str(target)
@@ -131,7 +133,7 @@ def process(c,p,force=False,directory_names=None):
   elif AUTO:
    candidate=matches[0]
    data=fetch(candidate["url"],LIMIT)
-   if not valid(data,candidate["ext"]):
+   if not valid(data,candidate["ext"]) or subtitle_quality.evaluate(data,candidate["ext"])["level"]=="blocked":
     schedule_retry(c,p,number,"review","字幕格式无法验证，需人工审核")
    else:
     check=assess(data,candidate["ext"],None if REMOTE_MOUNT_MODE else video_duration(p))
@@ -246,9 +248,21 @@ def subtitle_audit(request:Request,path:str):
     if size>LIMIT:raise ValueError("字幕过大，未读取")
     data=q.read_bytes()
     report=assess(data,q.suffix.lower().lstrip("."),None if REMOTE_MOUNT_MODE else video_duration(p))
-    items.append({"name":q.name,"size":size,"valid":valid(data,q.suffix.lower().lstrip(".")),"timeline":report})
+    items.append({"name":q.name,"size":size,"valid":valid(data,q.suffix.lower().lstrip(".")),"timeline":report,"quality":subtitle_quality.evaluate(data,q.suffix.lower().lstrip("."))})
    except (OSError,ValueError) as exc:items.append({"name":q.name,"error":str(exc)[:200]})
   return {"items":items,"backups":[q.name for q in subtitle_files.backups_for(p)]}
+@app.post("/api/candidates/quality")
+async def candidate_quality(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  item=c.execute("SELECT name,url,ext FROM candidates WHERE path=? AND url=?",(str(p),str(body.get("url","")))).fetchone()
+  if not item:raise HTTPException(404,"候选不存在")
+  try:
+   payload=fetch(item["url"],LIMIT)
+   if not valid(payload,item["ext"]):return {"score":0,"level":"blocked","reasons":["字幕文件格式无效"]}
+   return subtitle_quality.evaluate(payload,item["ext"])
+  except Exception as exc:raise HTTPException(502,"候选分析失败："+str(exc)[:160])
 @app.post("/api/candidates/refresh")
 async def refresh_candidates(request:Request):
  auth(request);body=await request.json()
@@ -275,6 +289,8 @@ async def replace_subtitle(request:Request):
   try:
    payload=fetch(item["url"],LIMIT)
    if not valid(payload,item["ext"]):raise ValueError("候选字幕格式无效")
+   quality=subtitle_quality.evaluate(payload,item["ext"])
+   if quality["level"]=="blocked":raise ValueError("字幕质量未通过："+ "；".join(quality["reasons"]))
    report=assess(payload,item["ext"],None if REMOTE_MOUNT_MODE else video_duration(p))
    target,backup=subtitle_files.replace(p,payload,item["ext"])
    reset_retry(c,p);record(c,p,code(p.name),"downloaded",str(target)+" | backup="+str(backup))
@@ -304,6 +320,8 @@ async def download(request:Request):
   try:
    data=fetch(item["url"],LIMIT)
    if not valid(data,item["ext"]):raise ValueError("Invalid subtitle format")
+   quality=subtitle_quality.evaluate(data,item["ext"])
+   if quality["level"]=="blocked":raise ValueError("字幕质量未通过："+ "；".join(quality["reasons"]))
    check=assess(data,item["ext"],None if REMOTE_MOUNT_MODE else video_duration(p))
    # Manual choice explicitly permits downloading a candidate that needs review.
    dest=save(p,dict(item),data);reset_retry(c,p);record(c,p,code(p.name),"downloaded",dest+" | manual | "+check["reason"])
