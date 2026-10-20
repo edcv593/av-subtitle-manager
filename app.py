@@ -58,7 +58,9 @@ def candidate_payload(url,limit=LIMIT):
   if not re.fullmatch(r"[0-9a-f]{64}",digest):raise ValueError("Invalid local candidate")
   target=DATA/"candidate_uploads"/digest
   if not target.is_file() or target.stat().st_size>limit:raise ValueError("Local candidate unavailable")
-  return target.read_bytes()
+  payload=target.read_bytes()
+  if hashlib.sha256(payload).hexdigest()!=digest:raise ValueError("Local candidate checksum mismatch")
+  return payload
  return fetch(url,limit)
 def extract_uploaded_subtitle(data,filename,number):
  suffix=Path(filename).suffix.lower()
