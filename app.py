@@ -543,6 +543,20 @@ async function show(path,tr){
     catch(e){msg("导入失败："+e.message);importBtn.disabled=false}
    };
    importBox.append(urlInput,importBtn);cell.append(importBox);
+   let uploadBox=el("div");let uploadInput=el("input");uploadInput.type="file";uploadInput.accept=".srt,.ass,.ssa,.vtt,.zip";
+   let uploadBtn=el("button","上传字幕 / ZIP 并审核");
+   uploadBtn.onclick=async()=>{
+    let file=uploadInput.files&&uploadInput.files[0];if(!file){msg("请先选择字幕文件");return}
+    if(file.size>8*1024*1024){msg("文件超过 8 MB，请缩小后重试");return}
+    uploadBtn.disabled=true;
+    try{
+     let query=new URLSearchParams({path,filename:file.name});
+     let res=await fetch("/api/candidates/upload?"+query,{method:"POST",headers:{"X-Auth-Token":token,"Content-Type":"application/octet-stream"},body:file});
+     let out=await res.json();if(!res.ok)throw Error(out.detail||res.status);
+     msg("字幕已加入审核候选，质量 "+out.quality.score+" 分");await render();
+    }catch(e){msg("上传失败："+e.message);uploadBtn.disabled=false}
+   };
+   uploadBox.append(uploadInput,uploadBtn);cell.append(uploadBox);
    let refresh=el("button","重新搜索迅雷候选");
    refresh.onclick=async()=>{
     refresh.disabled=true;refresh.textContent="正在搜索…";
