@@ -3,18 +3,23 @@ from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
 from timeline import assess,video_duration
+from reliability import embedded_chinese,score,should_skip,next_retry
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
 AGE=max(0,int(os.getenv("FILE_STABLE_MINUTES","30")))*60;LIMIT=int(os.getenv("MAX_DOWNLOAD_MB","8"))*1024*1024
 SKIP_C=os.getenv("SKIP_C_MARKER","true").lower()=="true"
+SCORE_THRESHOLD=max(0,min(100,int(os.getenv("SCORE_THRESHOLD","80"))))
+CHECK_EMBEDDED=os.getenv("CHECK_EMBEDDED","true").lower()=="true"
 API="https://api-shoulei-ssl.xunlei.com/oracle/subtitle"
 VIDEO={".mp4",".mkv",".avi",".mov",".wmv",".ts",".m4v"};SUB={".srt",".ass",".ssa",".vtt"}
 logging.basicConfig(level=logging.INFO);log=logging.getLogger("subtitle");lock=threading.Lock();app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
 def db():
  c=sqlite3.connect(DATA/"subtitle.db",timeout=30);c.row_factory=sqlite3.Row
  c.execute("CREATE TABLE IF NOT EXISTS videos(path TEXT PRIMARY KEY,code TEXT,status TEXT,detail TEXT,updated REAL,size INTEGER,mtime REAL,next_retry REAL DEFAULT 0)")
- c.execute("CREATE TABLE IF NOT EXISTS candidates(path TEXT,name TEXT,url TEXT,ext TEXT,PRIMARY KEY(path,url))");c.commit();return c
+ c.execute("CREATE TABLE IF NOT EXISTS candidates(path TEXT,name TEXT,url TEXT,ext TEXT,PRIMARY KEY(path,url))")
+ c.execute("CREATE TABLE IF NOT EXISTS retry_attempts(path TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0)")
+ c.commit();return c
 def code(name):
  m=re.search(r"(?<![A-Z0-9])([A-Z]{2,8})[-_. ]*(\d{2,6})(?!\d)",Path(name).stem.upper())
  return m.group(1)+"-"+m.group(2) if m else None
@@ -72,35 +77,59 @@ def save(p,c,data=None):
 def record(c,p,number,status,detail="",retry=0):
  st=p.stat()
  c.execute("INSERT OR REPLACE INTO videos VALUES(?,?,?,?,?,?,?,?)",(str(p),number,status,detail,time.time(),st.st_size,st.st_mtime,retry));c.commit()
+def schedule_retry(c,p,number,status,detail):
+ row=c.execute("SELECT attempts FROM retry_attempts WHERE path=?",(str(p),)).fetchone()
+ attempts=(row["attempts"] if row else 0)+1
+ c.execute("INSERT OR REPLACE INTO retry_attempts VALUES(?,?)",(str(p),attempts));c.commit()
+ record(c,p,number,status,detail,next_retry(status,attempts,RETRY/3600))
+def reset_retry(c,p):
+ c.execute("DELETE FROM retry_attempts WHERE path=?",(str(p),));c.commit()
 def process(c,p,force=False):
  number=code(p.name)
- if SKIP_C and marked(p.name):record(c,p,number,"skipped_c","Filename contains -C");return
- if sidecar(p):record(c,p,number,"existing","Sidecar subtitle found");return
- if not number:record(c,p,None,"no_code","Cannot parse code");return
  st=p.stat()
- if not force and time.time()-st.st_mtime<AGE:return
  old=c.execute("SELECT * FROM videos WHERE path=?",(str(p),)).fetchone()
- if not force and old and old["size"]==st.st_size and old["mtime"]==st.st_mtime and old["next_retry"]>time.time():return
- c.execute("DELETE FROM candidates WHERE path=?",(str(p),));c.commit()
+ if not force and time.time()-st.st_mtime<AGE:return
+ if not force and should_skip(old,st):return
+ if SKIP_C and marked(p.name):
+  reset_retry(c,p);record(c,p,number,"skipped_c","Filename contains -C");return
+ if sidecar(p):
+  reset_retry(c,p);record(c,p,number,"existing","Sidecar subtitle found");return
+ if not number:
+  reset_retry(c,p);record(c,p,None,"no_code","Cannot parse code");return
+ if CHECK_EMBEDDED:
+  found,detail=embedded_chinese(p)
+  if found is True:
+   reset_retry(c,p);record(c,p,number,"embedded",detail);return
+  if found is None:
+   schedule_retry(c,p,number,"error",detail);return
  try:
   matches=normalize(search(number),number)
+  c.execute("DELETE FROM candidates WHERE path=?",(str(p),))
   for item in matches:c.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,?,?)",(str(p),item["name"],item["url"],item["ext"]))
   c.commit()
-  if not matches:record(c,p,number,"missing","No confidently matched subtitle",time.time()+RETRY)
-  elif len(matches)>1:record(c,p,number,"review",str(len(matches))+" candidates",time.time()+RETRY)
+  if not matches:
+   schedule_retry(c,p,number,"missing","No confidently matched subtitle")
+  elif len(matches)>1:
+   schedule_retry(c,p,number,"review",str(len(matches))+" candidates; manual review")
   elif AUTO:
    candidate=matches[0]
    data=fetch(candidate["url"],LIMIT)
    if not valid(data,candidate["ext"]):
-    record(c,p,number,"review","字幕格式无法验证，需人工审核",time.time()+RETRY)
+    schedule_retry(c,p,number,"review","字幕格式无法验证，需人工审核")
    else:
     check=assess(data,candidate["ext"],video_duration(p))
-    if check["ok"]:record(c,p,number,"downloaded",save(p,candidate,data)+" | "+check["reason"])
-    else:record(c,p,number,"review",check["reason"],time.time()+RETRY)
-  else:record(c,p,number,"review","Automatic download disabled",time.time()+RETRY)
- except FileExistsError:record(c,p,number,"existing","Subtitle already exists")
+    points,reason=score(candidate,check)
+    if check["ok"] and points>=SCORE_THRESHOLD:
+     dest=save(p,candidate,data);reset_retry(c,p)
+     record(c,p,number,"downloaded",dest+" | score="+str(points)+" | "+reason)
+    else:
+     schedule_retry(c,p,number,"review","score="+str(points)+" | "+(check["reason"] if not check["ok"] else reason))
+  else:schedule_retry(c,p,number,"review","Automatic download disabled")
+ except FileExistsError:
+  reset_retry(c,p);record(c,p,number,"existing","Subtitle already exists")
  except Exception as e:
-  log.warning("%s: %s",p,e);record(c,p,number,"error",str(e)[:300],time.time()+RETRY)
+  log.warning("%s: %s",p,e);schedule_retry(c,p,number,"error",str(e)[:300])
+
 def scan():
  if not lock.acquire(False):return False
  try:
@@ -137,7 +166,7 @@ def video(c,path):
 def status(request:Request):
  auth(request)
  with db() as c:
-  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"media":str(MEDIA),"auto":AUTO}
+  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"media":str(MEDIA),"auto":AUTO,"score_threshold":SCORE_THRESHOLD}
 @app.get("/api/videos")
 def videos(request:Request,q:str="",status:str=""):
  auth(request)
@@ -172,6 +201,7 @@ async def download(request:Request):
   p=video(c,path)
   if marked(p.name) and SKIP_C:raise HTTPException(400,"-C video skipped")
   if sidecar(p):raise HTTPException(409,"Subtitle already exists")
+  if CHECK_EMBEDDED and embedded_chinese(p)[0] is True:raise HTTPException(409,"Embedded Chinese subtitle exists")
   item=c.execute("SELECT name,url,ext FROM candidates WHERE path=? AND url=?",(path,url)).fetchone()
   if not item:raise HTTPException(404,"Candidate not found")
   try:
@@ -179,14 +209,14 @@ async def download(request:Request):
    if not valid(data,item["ext"]):raise ValueError("Invalid subtitle format")
    check=assess(data,item["ext"],video_duration(p))
    # Manual choice explicitly permits downloading a candidate that needs review.
-   dest=save(p,dict(item),data);record(c,p,code(p.name),"downloaded",dest+" | manual | "+check["reason"])
+   dest=save(p,dict(item),data);reset_retry(c,p);record(c,p,code(p.name),"downloaded",dest+" | manual | "+check["reason"])
    return {"ok":True,"file":dest,"timeline":check}
   except FileExistsError:raise HTTPException(409,"Subtitle already exists")
   except Exception as e:raise HTTPException(502,str(e)[:200])
 @app.get("/",response_class=HTMLResponse)
 def home():
  return HTML
-HTML="""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AV Subtitle Manager</title><style>body{font:15px system-ui;background:#f4f6fa;color:#182434;margin:0}.wrap{max-width:1100px;margin:30px auto;padding:0 16px}h1{font-size:25px}.panel{background:white;border:1px solid #e3e7ed;border-radius:12px;padding:20px;margin:14px 0}button,input,select{padding:9px;border:1px solid #ccd3df;border-radius:7px;font:inherit}button{cursor:pointer}input{min-width:180px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:11px;border-bottom:1px solid #e8ebf0;word-break:break-all}.muted{color:#667}#message{margin:10px 0;color:#345}button{margin:3px}.grid{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#f3f6fb;padding:14px;border-radius:9px;min-width:100px}</style><div class="wrap"><h1>AV Subtitle Manager</h1><div class="panel"><input id="token" type="password" placeholder="输入 WEB_TOKEN"><button onclick="connect()">连接</button><button onclick="scan()">立即扫描</button><p class="muted">仅供局域网使用，令牌保存在浏览器当前会话。</p><div id="message"></div></div><div class="panel"><div class="grid" id="stats"></div></div><div class="panel"><input id="q" placeholder="番号或文件名"><select id="status"><option value="">全部</option><option value="downloaded">已下载</option><option value="existing">已有字幕</option><option value="skipped_c">-C 跳过</option><option value="missing">未找到</option><option value="review">待审核/时间轴疑似不匹配</option><option value="error">失败</option></select><button onclick="load()">查询</button><table><thead><tr><th>影片</th><th>番号</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table><div id="candidates"></div></div></div><script>
+HTML="""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AV Subtitle Manager</title><style>body{font:15px system-ui;background:#f4f6fa;color:#182434;margin:0}.wrap{max-width:1100px;margin:30px auto;padding:0 16px}h1{font-size:25px}.panel{background:white;border:1px solid #e3e7ed;border-radius:12px;padding:20px;margin:14px 0}button,input,select{padding:9px;border:1px solid #ccd3df;border-radius:7px;font:inherit}button{cursor:pointer}input{min-width:180px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:11px;border-bottom:1px solid #e8ebf0;word-break:break-all}.muted{color:#667}#message{margin:10px 0;color:#345}button{margin:3px}.grid{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#f3f6fb;padding:14px;border-radius:9px;min-width:100px}</style><div class="wrap"><h1>AV Subtitle Manager</h1><div class="panel"><input id="token" type="password" placeholder="输入 WEB_TOKEN"><button onclick="connect()">连接</button><button onclick="scan()">立即扫描</button><p class="muted">仅供局域网使用，令牌保存在浏览器当前会话。</p><div id="message"></div></div><div class="panel"><div class="grid" id="stats"></div></div><div class="panel"><input id="q" placeholder="番号或文件名"><select id="status"><option value="">全部</option><option value="downloaded">已下载</option><option value="existing">已有字幕</option><option value="embedded">内嵌中文字幕</option><option value="skipped_c">-C 跳过</option><option value="missing">未找到</option><option value="review">待审核/时间轴疑似不匹配</option><option value="error">失败</option></select><button onclick="load()">查询</button><table><thead><tr><th>影片</th><th>番号</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table><div id="candidates"></div></div></div><script>
 let token=sessionStorage.getItem("subtitle_token")||"";document.getElementById("token").value=token;
 function el(tag,text){let e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e}
 function msg(t){document.getElementById("message").textContent=t}
