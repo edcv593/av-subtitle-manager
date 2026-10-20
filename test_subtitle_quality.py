@@ -19,7 +19,12 @@ class AVQualityTests(unittest.TestCase):
   self.assertEqual(q["level"],"blocked")
  def test_invalid_timestamps_blocked(self):
   data=b"1\n00:00:05,000 --> 00:00:01,000\nHello\n"
-  self.assertEqual(evaluate(data,"srt")["level"],"blocked")
+  self.assertIn("结束时间", "；".join(evaluate(data,"srt")["reasons"]))
+ def test_single_long_cue_not_zero(self):
+  data=b"1\n00:00:00,000 --> 00:20:00,000\nIntro\n\n2\n00:20:01,000 --> 00:20:02,000\nHello\n"
+  report=evaluate(data,"srt")
+  self.assertGreater(report["score"],0)
+  self.assertTrue(report["warnings"])
  def test_empty_is_blocked(self):
   self.assertEqual(evaluate(b"","srt")["level"],"blocked")
 
