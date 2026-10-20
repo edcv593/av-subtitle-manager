@@ -1,4 +1,4 @@
-import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.parse,ipaddress,socket
+import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.parse,ipaddress,socket,hashlib,zipfile,io
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
@@ -28,6 +28,7 @@ def db():
  c.execute("CREATE TABLE IF NOT EXISTS candidates(path TEXT,name TEXT,url TEXT,ext TEXT,PRIMARY KEY(path,url))")
  columns=[row[1] for row in c.execute("PRAGMA table_info(candidates)")]
  if "source" not in columns:c.execute("ALTER TABLE candidates ADD COLUMN source TEXT NOT NULL DEFAULT '迅雷'")
+ c.execute("CREATE TABLE IF NOT EXISTS candidate_uploads(path TEXT,url TEXT PRIMARY KEY,filename TEXT NOT NULL,created REAL NOT NULL)")
  c.execute("CREATE TABLE IF NOT EXISTS retry_attempts(path TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0)")
  ai_queue.init(c)
  c.commit();return c
@@ -51,6 +52,30 @@ def fetch(url,limit=2097152):
   data=resp.read(limit+1)
   if len(data)>limit:raise ValueError("Subtitle too large")
   return data
+def candidate_payload(url,limit=LIMIT):
+ if url.startswith("local-subtitle://"):
+  digest=url[len("local-subtitle://"):]
+  if not re.fullmatch(r"[0-9a-f]{64}",digest):raise ValueError("Invalid local candidate")
+  target=DATA/"candidate_uploads"/digest
+  if not target.is_file() or target.stat().st_size>limit:raise ValueError("Local candidate unavailable")
+  return target.read_bytes()
+ return fetch(url,limit)
+def extract_uploaded_subtitle(data,filename,number):
+ suffix=Path(filename).suffix.lower()
+ if suffix in SUB:
+  return data,suffix.lstrip(".")
+ if suffix!=".zip":raise ValueError("仅支持字幕文件或 ZIP")
+ try:
+  with zipfile.ZipFile(io.BytesIO(data)) as archive:
+   infos=[i for i in archive.infolist() if not i.is_dir() and Path(i.filename).suffix.lower() in SUB]
+   if len(infos)!=1:raise ValueError("ZIP 必须恰好包含一个字幕文件")
+   info=infos[0]
+   if info.file_size>LIMIT or info.compress_size>LIMIT:raise ValueError("字幕过大")
+   if info.flag_bits & 1:raise ValueError("不支持加密 ZIP")
+   with archive.open(info) as f:payload=f.read(LIMIT+1)
+   if len(payload)>LIMIT:raise ValueError("字幕过大")
+   return payload,Path(info.filename).suffix.lower().lstrip(".")
+ except (zipfile.BadZipFile,RuntimeError) as e:raise ValueError("ZIP 无法读取") from e
 def search(number):
  query=urllib.parse.urlencode({"gcid":"","cid":"","name":number})
  obj=json.loads(fetch(API+"?"+query).decode("utf-8-sig"))
@@ -134,7 +159,7 @@ def process(c,p,force=False,directory_names=None):
    schedule_retry(c,p,number,"review",str(len(matches))+" candidates; manual review")
   elif AUTO:
    candidate=matches[0]
-   data=fetch(candidate["url"],LIMIT)
+   data=candidate_payload(candidate["url"],LIMIT)
    if not valid(data,candidate["ext"]) or subtitle_quality.evaluate(data,candidate["ext"])["level"]=="blocked":
     schedule_retry(c,p,number,"review","字幕格式无法验证，需人工审核")
    else:
@@ -250,7 +275,7 @@ async def import_candidate(request:Request):
   ext=Path(urllib.parse.urlsplit(url).path).suffix.lower().lstrip(".")
   if ext not in SUB_EXTENSIONS:raise HTTPException(400,"仅支持直链 .srt/.ass/.ssa/.vtt，不支持网页和压缩包")
   try:
-   payload=fetch(url,LIMIT)
+   payload=candidate_payload(url,LIMIT)
    if not valid(payload,ext):raise ValueError("字幕格式无效")
    quality=subtitle_quality.evaluate(payload,ext)
    if quality["level"]=="blocked":raise ValueError("字幕质量不合格："+"；".join(quality["reasons"]))
@@ -260,6 +285,32 @@ async def import_candidate(request:Request):
   c.commit()
   return {"ok":True,"quality":quality,"name":name}
 SUB_EXTENSIONS={"srt","ass","ssa","vtt"}
+@app.post("/api/candidates/upload")
+async def upload_candidate(request:Request,path:str,filename:str):
+ auth(request)
+ with db() as c:
+  p=video(c,path);number=code(p.name)
+  if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
+  if not filename or len(filename)>200:raise HTTPException(400,"文件名无效")
+  length=request.headers.get("content-length")
+  if length and int(length)>LIMIT:raise HTTPException(413,"上传文件过大")
+  payload=await request.body()
+  if len(payload)>LIMIT:raise HTTPException(413,"上传文件过大")
+  try:
+   data,ext=extract_uploaded_subtitle(payload,filename,number)
+   if not valid(data,ext):raise ValueError("字幕格式无效")
+   quality=subtitle_quality.evaluate(data,ext)
+   if quality["level"]=="blocked":raise ValueError("字幕质量不合格："+"；".join(quality["reasons"]))
+  except ValueError as e:raise HTTPException(422,str(e)[:250])
+  digest=hashlib.sha256(data).hexdigest();url="local-subtitle://"+digest
+  folder=DATA/"candidate_uploads";folder.mkdir(parents=True,exist_ok=True)
+  target=folder/digest
+  if not target.exists():target.write_bytes(data)
+  name=number+"-zh."+ext
+  c.execute("INSERT OR REPLACE INTO candidates(path,name,url,ext,source) VALUES(?,?,?,?,?)",(str(p),name,url,ext,"本地上传"))
+  c.execute("INSERT OR REPLACE INTO candidate_uploads(path,url,filename,created) VALUES(?,?,?,?)",(str(p),url,filename,time.time()))
+  c.commit()
+  return {"ok":True,"name":name,"quality":quality}
 @app.get("/api/subtitles")
 def subtitle_audit(request:Request,path:str):
  auth(request)
@@ -282,7 +333,7 @@ async def candidate_quality(request:Request):
   item=c.execute("SELECT name,url,ext FROM candidates WHERE path=? AND url=?",(str(p),str(body.get("url","")))).fetchone()
   if not item:raise HTTPException(404,"候选不存在")
   try:
-   payload=fetch(item["url"],LIMIT)
+   payload=candidate_payload(item["url"],LIMIT)
    if not valid(payload,item["ext"]):return {"score":0,"level":"blocked","reasons":["字幕文件格式无效"]}
    return subtitle_quality.evaluate(payload,item["ext"])
   except Exception as exc:raise HTTPException(502,"候选分析失败："+str(exc)[:160])
