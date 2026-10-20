@@ -227,6 +227,61 @@ async def download(request:Request):
    return {"ok":True,"file":dest,"timeline":check}
   except FileExistsError:raise HTTPException(409,"Subtitle already exists")
   except Exception as e:raise HTTPException(502,str(e)[:200])
+def ai_enabled():
+ if not AI_QUEUE_ENABLED:raise HTTPException(503,"AI queue disabled")
+def ai_job_video(c,path):
+ p=video(c,path)
+ if SKIP_C and marked(p.name):raise HTTPException(400,"-C video skipped")
+ if sidecar(p):raise HTTPException(409,"Subtitle already exists")
+ if CHECK_EMBEDDED:
+  found,detail=embedded_chinese(p)
+  if found is True:raise HTTPException(409,"Embedded Chinese subtitle exists")
+  if found is None:raise HTTPException(409,detail)
+ return p
+@app.get("/api/ai/jobs")
+def ai_jobs(request:Request,status:str=""):
+ auth(request);ai_enabled()
+ with db() as c:
+  try:return {"items":ai_queue.list_jobs(c,status)}
+  except ValueError as e:raise HTTPException(400,str(e))
+@app.post("/api/ai/jobs")
+async def ai_add(request:Request):
+ auth(request);ai_enabled();body=await request.json()
+ with db() as c:
+  p=ai_job_video(c,str(body.get("path","")));st=p.stat()
+  try:
+   job,created=ai_queue.enqueue(c,p,st.st_size,st.st_mtime,max_pending=AI_MAX_PENDING)
+   return {"job":job,"created":created}
+  except ValueError as e:raise HTTPException(409,str(e))
+@app.post("/api/ai/jobs/{job_id}/action")
+async def ai_action(job_id:int,request:Request):
+ auth(request);ai_enabled();body=await request.json()
+ with db() as c:
+  try:return {"job":ai_queue.control(c,job_id,str(body.get("action","")))}
+  except ValueError as e:raise HTTPException(409,str(e))
+# Future worker API is disabled by default. No AI inference is installed or executed.
+def worker_auth(request):
+ auth(request);ai_enabled()
+ if not AI_WORKER_ENABLED:raise HTTPException(503,"AI worker API disabled")
+@app.post("/api/ai/worker/claim")
+async def ai_claim(request:Request):
+ worker_auth(request);body=await request.json()
+ with db() as c:
+  ai_queue.recover_expired(c)
+  try:return {"job":ai_queue.claim(c,str(body.get("worker_id","")))}
+  except ValueError as e:raise HTTPException(400,str(e))
+@app.post("/api/ai/worker/{job_id}/heartbeat")
+async def ai_heartbeat(job_id:int,request:Request):
+ worker_auth(request);body=await request.json()
+ with db() as c:
+  try:return {"job":ai_queue.heartbeat(c,job_id,str(body.get("worker_id","")),body.get("progress"))}
+  except ValueError as e:raise HTTPException(409,str(e))
+@app.post("/api/ai/worker/{job_id}/transition")
+async def ai_transition(job_id:int,request:Request):
+ worker_auth(request);body=await request.json()
+ with db() as c:
+  try:return {"job":ai_queue.transition(c,job_id,str(body.get("worker_id","")),str(body.get("status","")),str(body.get("error","")))}
+  except ValueError as e:raise HTTPException(409,str(e))
 @app.get("/",response_class=HTMLResponse)
 def home():
  return HTML
