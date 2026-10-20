@@ -4,6 +4,7 @@ from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
 from timeline import assess,video_duration
 from reliability import embedded_chinese,score,should_skip,next_retry
+import ai_queue
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
@@ -11,6 +12,10 @@ AGE=max(0,int(os.getenv("FILE_STABLE_MINUTES","30")))*60;LIMIT=int(os.getenv("MA
 SKIP_C=os.getenv("SKIP_C_MARKER","true").lower()=="true"
 SCORE_THRESHOLD=max(0,min(100,int(os.getenv("SCORE_THRESHOLD","80"))))
 CHECK_EMBEDDED=os.getenv("CHECK_EMBEDDED","true").lower()=="true"
+AI_QUEUE_ENABLED=os.getenv("AI_QUEUE_ENABLED","true").lower()=="true"
+AI_AUTO_ENQUEUE=os.getenv("AI_AUTO_ENQUEUE","false").lower()=="true"
+AI_WORKER_ENABLED=os.getenv("AI_WORKER_ENABLED","false").lower()=="true"
+AI_MAX_PENDING=max(1,int(os.getenv("AI_MAX_PENDING","500")))
 API="https://api-shoulei-ssl.xunlei.com/oracle/subtitle"
 VIDEO={".mp4",".mkv",".avi",".mov",".wmv",".ts",".m4v"};SUB={".srt",".ass",".ssa",".vtt"}
 logging.basicConfig(level=logging.INFO);log=logging.getLogger("subtitle");lock=threading.Lock();app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
@@ -19,6 +24,7 @@ def db():
  c.execute("CREATE TABLE IF NOT EXISTS videos(path TEXT PRIMARY KEY,code TEXT,status TEXT,detail TEXT,updated REAL,size INTEGER,mtime REAL,next_retry REAL DEFAULT 0)")
  c.execute("CREATE TABLE IF NOT EXISTS candidates(path TEXT,name TEXT,url TEXT,ext TEXT,PRIMARY KEY(path,url))")
  c.execute("CREATE TABLE IF NOT EXISTS retry_attempts(path TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0)")
+ ai_queue.init(c)
  c.commit();return c
 def code(name):
  m=re.search(r"(?<![A-Z0-9])([A-Z]{2,8})[-_. ]*(\d{2,6})(?!\d)",Path(name).stem.upper())
@@ -77,6 +83,13 @@ def save(p,c,data=None):
 def record(c,p,number,status,detail="",retry=0):
  st=p.stat()
  c.execute("INSERT OR REPLACE INTO videos VALUES(?,?,?,?,?,?,?,?)",(str(p),number,status,detail,time.time(),st.st_size,st.st_mtime,retry));c.commit()
+def maybe_ai_enqueue(c,p):
+ if not AI_QUEUE_ENABLED or not AI_AUTO_ENQUEUE or not code(p.name) or (SKIP_C and marked(p.name)) or sidecar(p):return
+ try:
+  st=p.stat()
+  if CHECK_EMBEDDED and embedded_chinese(p)[0] is not False:return
+  ai_queue.enqueue(c,p,st.st_size,st.st_mtime,origin="xunlei_missing",max_pending=AI_MAX_PENDING)
+ except (OSError,ValueError) as exc:log.warning("AI enqueue skipped for %s: %s",p,exc)
 def schedule_retry(c,p,number,status,detail):
  row=c.execute("SELECT attempts FROM retry_attempts WHERE path=?",(str(p),)).fetchone()
  attempts=(row["attempts"] if row else 0)+1
@@ -109,6 +122,7 @@ def process(c,p,force=False):
   c.commit()
   if not matches:
    schedule_retry(c,p,number,"missing","No confidently matched subtitle")
+   maybe_ai_enqueue(c,p)
   elif len(matches)>1:
    schedule_retry(c,p,number,"review",str(len(matches))+" candidates; manual review")
   elif AUTO:
@@ -166,7 +180,7 @@ def video(c,path):
 def status(request:Request):
  auth(request)
  with db() as c:
-  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"media":str(MEDIA),"auto":AUTO,"score_threshold":SCORE_THRESHOLD}
+  return {"counts":{r["status"]:r["n"] for r in c.execute("SELECT status,count(*) n FROM videos GROUP BY status")},"scan_running":lock.locked(),"media":str(MEDIA),"auto":AUTO,"score_threshold":SCORE_THRESHOLD,"ai_queue_enabled":AI_QUEUE_ENABLED,"ai_auto_enqueue":AI_AUTO_ENQUEUE,"ai_worker_enabled":AI_WORKER_ENABLED}
 @app.get("/api/videos")
 def videos(request:Request,q:str="",status:str=""):
  auth(request)
