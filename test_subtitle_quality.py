@@ -25,6 +25,11 @@ class AVQualityTests(unittest.TestCase):
   report=evaluate(data,"srt")
   self.assertGreater(report["score"],0)
   self.assertTrue(report["warnings"])
+ def test_repeated_punctuation_is_quality_warning(self):
+  data=srt(["你好。 。"]*24)
+  report=evaluate(data,"srt")
+  self.assertTrue(any("重复标点" in reason for reason in report["reasons"]))
+  self.assertEqual(len(report["sha256"]),64)
  def test_empty_is_blocked(self):
   self.assertEqual(evaluate(b"","srt")["level"],"blocked")
 
