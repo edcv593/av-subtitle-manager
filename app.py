@@ -7,6 +7,7 @@ from reliability import embedded_chinese,score,should_skip,next_retry
 import ai_queue
 import subtitle_files
 import subtitle_quality
+import external_providers
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
@@ -288,6 +289,41 @@ async def import_candidate(request:Request):
   c.commit()
   return {"ok":True,"quality":quality,"name":name}
 SUB_EXTENSIONS={"srt","ass","ssa","vtt"}
+@app.post("/api/candidates/discover")
+async def discover_external(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")));number=code(p.name)
+  if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
+  pages,errors=external_providers.indexed_pages(number,fetch)
+  imported=[];seen=set()
+  for source,urls in pages.items():
+   for page_url in urls[:3]:
+    try:
+     page=fetch(page_url,250000)
+     links=external_providers.detail_downloads(source,page_url,page)
+     if not links:errors[source]="未发现可验证的中文字幕下载链接"
+     for link in links[:3]:
+      if link in seen:continue
+      seen.add(link)
+      try:
+       raw=fetch(link,LIMIT)
+       filename=Path(urllib.parse.urlsplit(link).path).name
+       data,ext=extract_uploaded_subtitle(raw,filename,number)
+       if not valid(data,ext):continue
+       quality=subtitle_quality.evaluate(data,ext)
+       if quality["level"]=="blocked":continue
+       digest=hashlib.sha256(data).hexdigest();local="local-subtitle://"+digest
+       folder=DATA/"candidate_uploads";folder.mkdir(parents=True,exist_ok=True)
+       target=folder/digest
+       if not target.exists():target.write_bytes(data)
+       name=number+"-zh."+ext
+       c.execute("INSERT OR REPLACE INTO candidates(path,name,url,ext,source) VALUES(?,?,?,?,?)",(str(p),name,local,ext,source))
+       imported.append({"source":source,"name":name,"score":quality["score"],"page":page_url})
+      except (OSError,ValueError,zipfile.BadZipFile) as exc:errors[source]=str(exc)[:140]
+    except (OSError,ValueError) as exc:errors[source]=str(exc)[:140]
+  c.commit()
+  return {"items":imported,"errors":errors,"pages":{k:len(v) for k,v in pages.items()}}
 @app.post("/api/candidates/upload")
 async def upload_candidate(request:Request,path:str,filename:str):
  auth(request)
@@ -533,7 +569,7 @@ async function show(path,tr){
     d.append(restore);cell.append(d);
    }
    if(candidates.code){
-    let panel=el("div");panel.append(el("p","其他字幕来源（人工检索；尚未接入自动下载）"));
+    let panel=el("div");panel.append(el("p","其他字幕来源（支持实验性自动搜索，也可人工检索）"));
     for(let [name,domain] of [["AVSubtitles","avsubtitles.com"],["Subtitle Cat","subtitlecat.com"],["JAV字幕","javzimu.com"]]){
      let a=el("a",name+" · 搜索 "+candidates.code);
      a.href="https://www.google.com/search?"+new URLSearchParams({q:"site:"+domain+" "+candidates.code+" 中文字幕"});
@@ -564,6 +600,16 @@ async function show(path,tr){
     }catch(e){msg("上传失败："+e.message);uploadBtn.disabled=false}
    };
    uploadBox.append(uploadInput,uploadBtn);cell.append(uploadBox);
+   let discover=el("button","自动搜索三个字幕网站");
+   discover.onclick=async()=>{
+    discover.disabled=true;discover.textContent="正在检索及验证…";
+    try{
+     let out=await api("/api/candidates/discover","POST",{path});
+     msg("新增 "+out.items.length+" 个已验证候选；"+Object.entries(out.errors).map(([k,v])=>k+"："+v).join("；"));
+     await render();
+    }catch(e){msg("外部搜索失败："+e.message);discover.disabled=false;discover.textContent="重试外部搜索"}
+   };
+   cell.append(discover);
    let refresh=el("button","重新搜索迅雷候选");
    refresh.onclick=async()=>{
     refresh.disabled=true;refresh.textContent="正在搜索…";
@@ -571,7 +617,7 @@ async function show(path,tr){
     catch(e){cell.append(el("p","搜索失败："+e.message));refresh.disabled=false;refresh.textContent="重新搜索迅雷候选"}
    };
    cell.append(refresh);
-   cell.append(el("p","候选字幕："+candidates.items.length+" 个（迅雷及手动导入）"));
+   cell.append(el("p","候选字幕："+candidates.items.length+" 个（迅雷、外部来源及手动导入）"));
    if(!candidates.items.length)cell.append(el("p","暂无候选，可点击重新搜索。"));
    for(let x of candidates.items){
     let d=el("div");d.style.padding="8px 0";d.style.borderTop="1px solid #e3e7ed";
