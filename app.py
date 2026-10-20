@@ -26,6 +26,8 @@ def db():
  c=sqlite3.connect(DATA/"subtitle.db",timeout=30);c.row_factory=sqlite3.Row
  c.execute("CREATE TABLE IF NOT EXISTS videos(path TEXT PRIMARY KEY,code TEXT,status TEXT,detail TEXT,updated REAL,size INTEGER,mtime REAL,next_retry REAL DEFAULT 0)")
  c.execute("CREATE TABLE IF NOT EXISTS candidates(path TEXT,name TEXT,url TEXT,ext TEXT,PRIMARY KEY(path,url))")
+ columns=[row[1] for row in c.execute("PRAGMA table_info(candidates)")]
+ if "source" not in columns:c.execute("ALTER TABLE candidates ADD COLUMN source TEXT NOT NULL DEFAULT '迅雷'")
  c.execute("CREATE TABLE IF NOT EXISTS retry_attempts(path TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0)")
  ai_queue.init(c)
  c.commit();return c
@@ -122,7 +124,7 @@ def process(c,p,force=False,directory_names=None):
    schedule_retry(c,p,number,"error",detail);return
  try:
   matches=normalize(search(number),number)
-  c.execute("DELETE FROM candidates WHERE path=?",(str(p),))
+  c.execute("DELETE FROM candidates WHERE path=? AND source=?",(str(p),"迅雷"))
   for item in matches:c.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,?,?)",(str(p),item["name"],item["url"],item["ext"]))
   c.commit()
   if not matches:
@@ -236,7 +238,28 @@ def candidates(request:Request,path:str):
  auth(request)
  with db() as c:
   video(c,path)
-  return {"items":[dict(r) for r in c.execute("SELECT name,url,ext FROM candidates WHERE path=?",(path,))],"code":code(Path(path).name)}
+  return {"items":[dict(r) for r in c.execute("SELECT name,url,ext,source FROM candidates WHERE path=?",(path,))],"code":code(Path(path).name)}
+@app.post("/api/candidates/import")
+async def import_candidate(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  number=code(p.name)
+  if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
+  url=str(body.get("url","")).strip()
+  ext=Path(urllib.parse.urlsplit(url).path).suffix.lower().lstrip(".")
+  if ext not in SUB_EXTENSIONS:raise HTTPException(400,"仅支持直链 .srt/.ass/.ssa/.vtt，不支持网页和压缩包")
+  try:
+   payload=fetch(url,LIMIT)
+   if not valid(payload,ext):raise ValueError("字幕格式无效")
+   quality=subtitle_quality.evaluate(payload,ext)
+   if quality["level"]=="blocked":raise ValueError("字幕质量不合格："+"；".join(quality["reasons"]))
+  except (ValueError,OSError) as e:raise HTTPException(422,str(e)[:250])
+  name=number+"-zh."+ext
+  c.execute("INSERT OR REPLACE INTO candidates(path,name,url,ext,source) VALUES(?,?,?,?,?)",(str(p),name,url,ext,"手动导入"))
+  c.commit()
+  return {"ok":True,"quality":quality,"name":name}
+SUB_EXTENSIONS={"srt","ass","ssa","vtt"}
 @app.get("/api/subtitles")
 def subtitle_audit(request:Request,path:str):
  auth(request)
@@ -461,6 +484,14 @@ async function show(path,tr){
     }
     cell.append(panel);
    }
+   let importBox=el("div");let urlInput=el("input");urlInput.placeholder="粘贴 HTTPS 字幕文件直链（.srt/.ass/.ssa/.vtt）";urlInput.style.width="65%";
+   let importBtn=el("button","导入字幕候选");
+   importBtn.onclick=async()=>{
+    importBtn.disabled=true;
+    try{let out=await api("/api/candidates/import","POST",{path,url:urlInput.value});msg("已导入候选，质量 "+out.quality.score+" 分");await render()}
+    catch(e){msg("导入失败："+e.message);importBtn.disabled=false}
+   };
+   importBox.append(urlInput,importBtn);cell.append(importBox);
    let refresh=el("button","重新搜索迅雷候选");
    refresh.onclick=async()=>{
     refresh.disabled=true;refresh.textContent="正在搜索…";
@@ -468,11 +499,11 @@ async function show(path,tr){
     catch(e){cell.append(el("p","搜索失败："+e.message));refresh.disabled=false;refresh.textContent="重新搜索迅雷候选"}
    };
    cell.append(refresh);
-   cell.append(el("p","迅雷候选："+candidates.items.length+" 个"));
+   cell.append(el("p","候选字幕："+candidates.items.length+" 个（迅雷及手动导入）"));
    if(!candidates.items.length)cell.append(el("p","暂无候选，可点击重新搜索。"));
    for(let x of candidates.items){
     let d=el("div");d.style.padding="8px 0";d.style.borderTop="1px solid #e3e7ed";
-    d.append(el("span",x.name+" "));
+    d.append(el("span","["+(x.source||"迅雷")+"] "+x.name+" "));
     let btn=el("button",subs.items.length?"备份旧字幕并更换":"人工确认下载");
     btn.onclick=async()=>{
      if(!confirm("远程挂载模式不验证视频时长。请确认字幕与影片匹配；如有旧字幕将先备份。继续？"))return;
