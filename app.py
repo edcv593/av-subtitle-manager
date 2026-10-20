@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 from timeline import assess,video_duration
 from reliability import embedded_chinese,score,should_skip,next_retry
 import ai_queue
+import subtitle_files
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
@@ -234,6 +235,62 @@ def candidates(request:Request,path:str):
  with db() as c:
   video(c,path)
   return {"items":[dict(r) for r in c.execute("SELECT name,url,ext FROM candidates WHERE path=?",(path,))]}
+@app.get("/api/subtitles")
+def subtitle_audit(request:Request,path:str):
+ auth(request)
+ with db() as c:
+  p=video(c,path);items=[]
+  for q in subtitle_files.subtitles_for(p):
+   try:
+    size=q.stat().st_size
+    if size>LIMIT:raise ValueError("字幕过大，未读取")
+    data=q.read_bytes()
+    report=assess(data,q.suffix.lower().lstrip("."),None if REMOTE_MOUNT_MODE else video_duration(p))
+    items.append({"name":q.name,"size":size,"valid":valid(data,q.suffix.lower().lstrip(".")),"timeline":report})
+   except (OSError,ValueError) as exc:items.append({"name":q.name,"error":str(exc)[:200]})
+  return {"items":items,"backups":[q.name for q in subtitle_files.backups_for(p)]}
+@app.post("/api/candidates/refresh")
+async def refresh_candidates(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 视频已跳过")
+  number=code(p.name)
+  if not number:raise HTTPException(400,"无法识别番号")
+  try:matches=normalize(search(number),number)
+  except Exception as exc:raise HTTPException(502,"迅雷搜索失败："+str(exc)[:160])
+  c.execute("DELETE FROM candidates WHERE path=?",(str(p),))
+  for item in matches:c.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,?,?)",(str(p),item["name"],item["url"],item["ext"]))
+  c.commit()
+  return {"items":matches}
+@app.post("/api/subtitles/replace")
+async def replace_subtitle(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 视频已跳过")
+  item=c.execute("SELECT name,url,ext FROM candidates WHERE path=? AND url=?",(str(p),str(body.get("url","")))).fetchone()
+  if not item:raise HTTPException(404,"候选不存在")
+  if len(subtitle_files.subtitles_for(p))!=1:raise HTTPException(409,"必须恰好有一份外挂字幕才能安全替换")
+  try:
+   payload=fetch(item["url"],LIMIT)
+   if not valid(payload,item["ext"]):raise ValueError("候选字幕格式无效")
+   report=assess(payload,item["ext"],None if REMOTE_MOUNT_MODE else video_duration(p))
+   target,backup=subtitle_files.replace(p,payload,item["ext"])
+   reset_retry(c,p);record(c,p,code(p.name),"downloaded",str(target)+" | backup="+str(backup))
+   return {"ok":True,"file":str(target),"backup":backup.name,"timeline":report}
+  except (OSError,ValueError) as exc:raise HTTPException(502,"替换失败："+str(exc)[:180])
+@app.post("/api/subtitles/restore")
+async def restore_subtitle(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 视频已跳过")
+  try:
+   target,backup=subtitle_files.restore(p,str(body.get("backup","")))
+   reset_retry(c,p);record(c,p,code(p.name),"existing","Restored "+str(target))
+   return {"ok":True,"file":str(target),"backup":backup.name}
+  except (OSError,ValueError) as exc:raise HTTPException(409,str(exc)[:180])
 @app.post("/api/download")
 async def download(request:Request):
  auth(request);data=await request.json();path=str(data.get("path",""));url=str(data.get("url",""))
