@@ -99,6 +99,8 @@ def retry_legacy_subtitle_selection(c,paths):
  for path in dict.fromkeys(paths):
   row=c.execute("SELECT id FROM review_jobs WHERE video_path=? AND status='reviewing' AND error LIKE '需要恰好一份外挂中文字幕%' ORDER BY id DESC LIMIT 1",(path,)).fetchone()
   if not row:continue
+  active=c.execute("SELECT 1 FROM review_jobs WHERE video_path=? AND status IN ('pending','running','paused') LIMIT 1",(path,)).fetchone()
+  if active:continue
   c.execute("UPDATE review_jobs SET status='pending',error='',phase='',updated=? WHERE id=?",(time.time(),row["id"]))
   count+=1
  c.commit()
