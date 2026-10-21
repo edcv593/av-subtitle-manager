@@ -24,6 +24,11 @@ class WebHTMLTests(unittest.TestCase):
   self.assertIn('"/api/subtitles/translate/retry-failed"',html)
   self.assertIn('重试翻译失败的条目',html)
   self.assertIn('连续 3 批没有翻译成功',html)
+ def test_automatic_full_review_controls(self):
+  tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
+  html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
+  for word in ["一键扫描整片并汇总建议","暂停（当前批次结束）","继续上次校对","subtitle_compare_progress:","while(!compareStop)","compareSave(ids)"]:
+   self.assertIn(word,html)
  def test_comparison_previews_alignment_before_ai(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
