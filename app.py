@@ -89,7 +89,7 @@ def fetch_public_search(url,limit=250000):
    if not location:raise ValueError("Search redirect without Location")
    url=urllib.parse.urljoin(url,location)
  raise ValueError("Too many search redirects")
-def fetch_site_search(url,limit=350000):
+def fetch_site_search(url,limit=350000,timeout=20):
  """Site search only: allow a short HTTPS redirect chain within the same domain."""
  origin=urllib.parse.urlsplit(url).hostname
  allowed={"www.avsubtitles.com","avsubtitles.com","www.subtitlecat.com","subtitlecat.com","www.javzimu.com","javzimu.com"}
@@ -103,7 +103,7 @@ def fetch_site_search(url,limit=350000):
    raise ValueError("Search destination is not public")
   headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36","Accept":"text/html,application/xhtml+xml;q=0.9,*/*;q=0.8","Accept-Language":"zh-CN,zh;q=0.9,en;q=0.7"}
   try:
-   with urllib.request.build_opener(NoRedirect()).open(urllib.request.Request(url,headers=headers),timeout=20) as resp:
+   with urllib.request.build_opener(NoRedirect()).open(urllib.request.Request(url,headers=headers),timeout=timeout) as resp:
     data=resp.read(limit+1)
     if len(data)>limit:raise ValueError("Search page too large")
     return data
@@ -322,21 +322,21 @@ def review_auto_reference(p):
  details=[]
  try:
   url=external_providers.SEARCH_ENDPOINTS["AVSubtitles"](number)
-  page=fetch_site_search(url,350000)
+  page=fetch_site_search(url,350000,8)
   details=external_providers.avsubtitles_reference_pages(number,page,max_items=4)
  except Exception as exc:log.info("AVSubtitles direct search unavailable for %s: %s",number,exc)
  try:
   if not details:
-   pages,_,_=external_providers.native_search(number,fetch_site_search,max_pages=2,source="AVSubtitles")
+   pages,_,_=external_providers.native_search(number,lambda u,limit:fetch_site_search(u,limit,8),max_pages=1,source="AVSubtitles")
    for movie in pages.get("AVSubtitles",[])[:2]:
-    try:details.extend(external_providers.avsubtitles_reference_pages(number,fetch_site_search(movie,350000),max_items=4))
+    try:details.extend(external_providers.avsubtitles_reference_pages(number,fetch_site_search(movie,350000,8),max_items=4))
     except Exception:pass
   for detail in dict.fromkeys(details):
    try:
-    links=external_providers.avsubtitles_reference_downloads(detail,fetch_site_search(detail,350000))
+    links=external_providers.avsubtitles_reference_downloads(detail,fetch_site_search(detail,350000,8))
     for link in links[:3]:
      try:
-      payload=fetch_site_search(link,LIMIT)
+      payload=fetch_site_search(link,LIMIT,8)
       suffix=Path(urllib.parse.urlsplit(link).path).suffix.lower()
       filename="reference"+(suffix if suffix in SUB or suffix==".zip" else ".srt")
       data,ext=extract_uploaded_subtitle(payload,filename,number)
