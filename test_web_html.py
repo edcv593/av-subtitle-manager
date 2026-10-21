@@ -39,6 +39,8 @@ class WebHTMLTests(unittest.TestCase):
   self.assertIn('api("/api/subtitles/optimize/preview","POST",configAuto)',html)
   self.assertIn('api("/api/subtitles/optimize/apply","POST"',html)
   self.assertIn("saved.backup",html)
+  self.assertIn("item.after",html)
+  self.assertIn("sessionStorage.removeItem(compareStorage)",html)
  def test_pending_review_bulk_queue_is_non_destructive(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
