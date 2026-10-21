@@ -341,7 +341,9 @@ async def discover_external(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")));number=code(p.name)
   if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
-  pages,errors,search_stats=external_providers.native_search(number,fetch_site_search)
+  source=body.get("source")
+  if source is not None and source not in external_providers.SITES:raise HTTPException(400,"未知字幕来源")
+  pages,errors,search_stats=external_providers.native_search(number,fetch_site_search,source=source)
   imported=[];seen=set();stats={k:{"pages":len(v),"download_links":0,"downloaded":0,"accepted":0,"rejected":0} for k,v in pages.items()}
   for source,urls in pages.items():
    for page_url in urls[:3]:
@@ -653,17 +655,34 @@ async function show(path,tr){
    };
    uploadBox.append(uploadInput,uploadBtn);cell.append(uploadBox);
    let discover=el("button","自动搜索三个字幕网站");
+   let progressPanel=el("div");progressPanel.style.margin="12px 0";progressPanel.style.whiteSpace="pre-wrap";
+   let progressTitle=el("p","点击自动搜索后，将逐站显示检索进度及结果。");
+   let progressRows=el("div");
+   progressPanel.append(progressTitle,progressRows);
+   cell.append(discover,progressPanel);
    discover.onclick=async()=>{
-    discover.disabled=true;discover.textContent="正在检索及验证…";
+    discover.disabled=true;let started=Date.now(),total=0;
+    let sites=["AVSubtitles","Subtitle Cat","JAV字幕"];
+    progressRows.replaceChildren();
+    let results=sites.map(site=>{let line=el("p",site+"：等待中");progressRows.append(line);return line});
+    let current=0;let phase="准备检索";
+    let ticker=setInterval(()=>{progressTitle.textContent="外部搜索："+phase+" · 已耗时 "+Math.floor((Date.now()-started)/1000)+" 秒 · "+current+"/3 个网站完成"},1000);
     try{
-     let out=await api("/api/candidates/discover","POST",{path});
-     let diagnostics=Object.entries(out.stats||{}).map(([k,v])=>k+"：搜索链接 "+((out.search_stats||{})[k]?.links_seen??0)+" / 匹配页面 "+v.pages+" / 字幕链接 "+v.download_links+" / 下载 "+v.downloaded+" / 通过 "+v.accepted+" / 拒绝 "+v.rejected+(out.errors[k]?"；原因："+out.errors[k]:"")).join(" | ");
-     msg("外部搜索完成，新增 "+out.items.length+" 个候选。"+diagnostics);
-     cell.append(el("p","搜索诊断："+diagnostics));
-     await render();
-    }catch(e){msg("外部搜索失败："+e.message);discover.disabled=false;discover.textContent="重试外部搜索"}
+     for(let i=0;i<sites.length;i++){
+      let site=sites[i];phase="正在搜索 "+site;results[i].textContent=site+"：检索中…";
+      try{
+       let out=await api("/api/candidates/discover","POST",{path,source:site});
+       total+=out.items.length;let v=(out.stats||{})[site]||{};
+       let links=((out.search_stats||{})[site]||{}).links_seen||0;
+       results[i].textContent=site+"：完成 · 搜索链接 "+links+" · 匹配页面 "+(v.pages||0)+" · 字幕链接 "+(v.download_links||0)+" · 下载 "+(v.downloaded||0)+" · 通过 "+(v.accepted||0)+" · 拒绝 "+(v.rejected||0)+(out.errors&&out.errors[site]?" · 原因："+out.errors[site]:"");
+      }catch(e){results[i].textContent=site+"：失败 · "+e.message}
+      current++;
+     }
+     phase="完成";progressTitle.textContent="外部搜索完成 · 新增 "+total+" 个候选 · 耗时 "+Math.floor((Date.now()-started)/1000)+" 秒";
+     msg("外部搜索完成，新增 "+total+" 个候选；详情见字幕审核进度。");
+     let reload=el("button","刷新候选列表");reload.onclick=()=>render();progressRows.append(reload);
+    }finally{clearInterval(ticker);discover.disabled=false;discover.textContent="重新自动搜索三个网站"}
    };
-   cell.append(discover);
    let refresh=el("button","重新搜索迅雷候选");
    refresh.onclick=async()=>{
     refresh.disabled=true;refresh.textContent="正在搜索…";
