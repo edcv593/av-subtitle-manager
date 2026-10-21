@@ -1,5 +1,5 @@
 import unittest
-from external_providers import indexed_pages,detail_downloads
+from external_providers import indexed_pages,detail_downloads,native_search
 
 class ProviderTests(unittest.TestCase):
  def test_index_filters_unrelated_and_offsite_results(self):
@@ -17,6 +17,18 @@ class ProviderTests(unittest.TestCase):
   self.assertEqual(len(found["AVSubtitles"]),1)
   self.assertEqual(errors,{})
 
+ def test_native_search_sites_are_independent(self):
+  html=b'<a href="/subs/1443/T48.IPZZ-791.2.html">T48.IPZZ-791.2</a>'
+  def fetch(url,limit):
+   if "subtitlecat.com" in url:return html
+   if "javzimu.com" in url:raise ValueError("site unavailable")
+   return b'<a href="/subtitles.php?subid=32631">IPZZ-791 subtitles</a>'
+  found,errors,stats=native_search("IPZZ-791",fetch)
+  self.assertEqual(len(found["AVSubtitles"]),1)
+  self.assertEqual(len(found["Subtitle Cat"]),1)
+  self.assertEqual(found["JAV字幕"],[])
+  self.assertIn("JAV字幕",errors)
+  self.assertEqual(stats["Subtitle Cat"]["links_seen"],1)
  def test_avsubtitles_zip_link(self):
   page=b'<a href="/download_sub.php?subid=10845&amp;revid=1">SSIS-334-zh.zip</a>'
   links=detail_downloads("AVSubtitles","https://www.avsubtitles.com/subtitles.php?subid=10845",page)
