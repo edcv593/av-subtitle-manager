@@ -33,7 +33,7 @@ class OptimizerTests(unittest.TestCase):
 
 class ReferenceSubtitleTests(unittest.TestCase):
  def test_srt_reference_excerpt(self):
-  raw=b"1\\n00:00:01,000 --> 00:00:02,000\\nHello\\n"
+  raw=b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
   self.assertIn("Hello",reference_excerpt(raw,"srt"))
  def test_reject_invalid_reference(self):
   with self.assertRaises(ValueError):reference_excerpt(b"hello","srt")
