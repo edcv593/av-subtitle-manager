@@ -9,6 +9,9 @@ class WorkflowPlanTests(unittest.TestCase):
   p=plan("/media/IPZZ-791.mkv",["IPZZ-791.ja.srt"],"IPZZ-791","missing")
   self.assertEqual(p["action"],"translate")
   self.assertTrue(p["requires_confirmation"])
+ def test_unknown_language_sidecar_does_not_trigger_search(self):
+  result=plan("/media/IPZZ-791.mkv",["IPZZ-791.srt"],"IPZZ-791","existing")
+  self.assertEqual(result["action"],"review")
  def test_candidate_prefers_review(self):
   self.assertEqual(plan("/media/IPZZ-791.mkv",[],"IPZZ-791","missing",2)["action"],"review")
  def test_missing_search_does_not_write(self):
