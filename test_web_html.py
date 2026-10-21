@@ -44,7 +44,8 @@ class WebHTMLTests(unittest.TestCase):
  def test_pending_review_bulk_queue_is_non_destructive(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
-  self.assertIn("待审核列表",html)
+  self.assertIn("NAS 后台任务队列 · 批量处理待审核",html)
+  self.assertIn("NAS 队列版 2026.10.21",html)
   self.assertIn('new URLSearchParams({status:"review"})',html)
   self.assertIn("将全部待审核影片加入 NAS 队列",html)
   self.assertIn('api("/api/review/jobs","POST",{paths:items.map(x=>x.path),auto_apply:auto.checked})',html)
