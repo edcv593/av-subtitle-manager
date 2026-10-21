@@ -741,6 +741,22 @@ async function show(path,tr){
     let result=el("div");result.style.whiteSpace="pre-wrap";
     let previewBtn=el("button","预览修改差异");
     let aiBtn=el("button","可选 AI 润色建议");
+    let referenceId=null;
+    let refInput=el("input");refInput.type="file";refInput.accept=".srt,.ass,.ssa,.vtt";
+    let refButton=el("button","上传原语言参考字幕");
+    let refInfo=el("p","可选：上传日语或其他原语言字幕作为 AI 校对参考，不会覆盖中文字幕。");
+    refButton.onclick=async()=>{
+     let file=refInput.files&&refInput.files[0];if(!file){msg("请先选择参考字幕");return}
+     refButton.disabled=true;
+     try{
+      let query=new URLSearchParams({path,filename:file.name});
+      let response=await fetch("/api/subtitles/reference/upload?"+query,{method:"POST",headers:{"X-Auth-Token":token,"Content-Type":"application/octet-stream"},body:file});
+      let data=await response.json();if(!response.ok)throw Error(data.detail||response.status);
+      referenceId=data.id;refInfo.textContent="参考字幕已上传："+data.filename+"（仅用于 AI 对照）";
+     }catch(e){refInfo.textContent="参考字幕上传失败："+e.message}
+     finally{refButton.disabled=false}
+    };
+    panel.append(refInfo,refInput,refButton);
     let sceneBtn=el("button","场景一致性检查说明");
     let applyBtn=el("button","确认保存并备份");applyBtn.disabled=true;
     let pending=null;let replacements={};
@@ -761,10 +777,10 @@ async function show(path,tr){
     punct.onchange=()=>{pending=null;applyBtn.disabled=true};
     sceneBtn.onclick=()=>{result.replaceChildren(el("p","远程 NAS 不读取视频或音频，无法自动核对场景。建议对照播放器中的对白与字幕；仅凭文本分析不能确认译文准确。"))};
     aiBtn.onclick=async()=>{
-     if(!confirm("AI 润色将向外部 API 发送最多 12000 字符的字幕文本片段。确认继续？"))return;
+     if(!confirm("AI 润色将向外部 API 发送最多 12000 字符的中文字幕"+(referenceId?"及最多 6000 字符的参考字幕":"")+"。确认继续？"))return;
      aiBtn.disabled=true;result.replaceChildren(el("p","正在请求 AI 文本建议（不会自动保存）…"));
      try{
-      let out=await api("/api/subtitles/optimize/ai","POST",{path});
+      let out=await api("/api/subtitles/optimize/ai","POST",{path,reference_id:referenceId});
       result.replaceChildren(el("p",out.notice));
       for(let suggestion of out.suggestions){
        let item=el("div");let check=el("input");check.type="checkbox";
