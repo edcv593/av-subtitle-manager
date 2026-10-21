@@ -675,7 +675,7 @@ async def translate_google_batch(request:Request):
    state["draft"]=out["translated_text"];state["offset"]=out["next_offset"]
    state["failures"].extend(out["failed"])
    tmp=state_path.with_suffix(".tmp");tmp.write_text(json.dumps(state,ensure_ascii=False),"utf-8");tmp.replace(state_path)
-   return {"done":out["done"],"next_offset":out["next_offset"],"total":out["total"],"translated":len(out["changes"]),"failures":len(state["failures"]),"draft_sha256":subtitle_optimizer.digest(state["draft"].encode()),"notice":"Google 初译草稿已暂存，失败台词保留原日语"}
+   return {"done":out["done"],"next_offset":out["next_offset"],"total":out["total"],"translated":len(out["changes"]),"failures":len(state["failures"]),"draft_sha256":subtitle_optimizer.digest(state["draft"].encode()),"notice":provider+" 初译草稿已暂存，失败台词保留原日语"}
   except (ValueError,OSError) as exc:raise HTTPException(502,str(exc)[:180])
 
 @app.post("/api/subtitles/translate/retry-failed")
@@ -1080,7 +1080,18 @@ async function show(path,tr){
     panel.append(autoBtn,autoStatus);
     let translationEngine=el("select");for(let [value,label] of [["google","Google 免费翻译（实验性）"],["deepl","DeepL API（Free / Pro）"]]){let opt=el("option",label);opt.value=value;translationEngine.append(opt)}
     translationEngine.value=sessionStorage.getItem("subtitle_engine:"+path)||"google";
-    translationEngine.onchange=()=>{sessionStorage.setItem("subtitle_engine:"+path,translationEngine.value);googleStatus.textContent="已切换初译引擎；翻译进度按引擎分别保存。点击开始或继续翻译。"};
+    translationEngine.onchange=async()=>{
+     sessionStorage.setItem("subtitle_engine:"+path,translationEngine.value);
+     googleDone=false;googleHash=null;googlePreview.disabled=true;googleRetry.disabled=true;googleErrors.replaceChildren();googleSuggestions.replaceChildren();
+     googleProgress.max=1;googleProgress.value=0;googleProgressDetail.textContent="正在读取所选引擎进度…";
+     if(!referenceId){googleStatus.textContent="请选择或上传日语 SRT，再点击开始翻译。";return}
+     try{
+      let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId,provider:translationEngine.value});
+      googleProgress.max=Math.max(v.total,1);googleProgress.value=v.next_offset;googleShowErrors(v);
+      googleProgressDetail.textContent=v.next_offset+"/"+v.total+" 条 · 失败 "+v.failures+" 条";
+      googleStatus.textContent=v.started?"已恢复所选翻译引擎的草稿":"所选引擎尚未开始翻译";
+     }catch(e){googleStatus.textContent="读取翻译进度失败："+e.message}
+    };
     let googleBtn=el("button","开始初译 → DeepSeek 润色");
     let googlePause=el("button","暂停（本批结束后）");googlePause.disabled=true;
     let googleStatus=el("p","优先使用已上传的日语 SRT；没有上传时才尝试 AVSubtitles。");
@@ -1108,7 +1119,7 @@ async function show(path,tr){
     };
     googleRetry.onclick=async()=>{
      if(googleBusy||!referenceId)return;
-     googleBusy=true;googleRetry.disabled=true;googlePreview.disabled=true;
+     googleBusy=true;translationEngine.disabled=true;googleRetry.disabled=true;googlePreview.disabled=true;
      try{
       let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId,provider:translationEngine.value});
       if(!v.failures)return;
@@ -1126,11 +1137,12 @@ async function show(path,tr){
       googleStatus.textContent=v.failures?"重试结束，仍有 "+v.failures+" 条失败。可稍后继续重试。":"失败条目已清零；可点击继续翻译和 DeepSeek 校对。";
       googleBtn.textContent="继续翻译";
      }catch(e){googleStatus.textContent="重试失败："+e.message}
-     finally{googleBusy=false;googleRetry.disabled=false}
+     finally{googleBusy=false;translationEngine.disabled=false;googleRetry.disabled=false}
     };
     googlePause.onclick=()=>{googlePaused=true;googlePause.disabled=true;googleStatus.textContent="暂停已请求，等待当前字幕批次完成后停止。草稿会保留。"};
     googleBtn.onclick=async()=>{
      if(googleBusy)return;
+     translationEngine.disabled=true;
      if(!confirm("将日语字幕文本发送到所选翻译引擎，并使用已配置的 DeepSeek 润色（可能产生费用）。确认？"))return;
      googleBusy=true;googlePaused=false;googleBtn.disabled=true;googlePause.disabled=false;googlePreview.disabled=true;googleDone=false;googleEdits={};googleSuggestions.replaceChildren();
      let startedAt=Date.now(),progress={next_offset:0,total:0,failures:0};
@@ -1153,7 +1165,7 @@ async function show(path,tr){
       while(!progress.done){
        if(googlePaused){googleStatus.textContent="已暂停；"+progress.next_offset+"/"+progress.total+" 条已保存。点击「继续翻译」可恢复。";googleBtn.textContent="继续翻译";return}
        phase="初译 API 请求中（单批最多 2 条）";
-       googleStatus.textContent="字幕初译：正在处理第 "+(progress.next_offset+1)+"–"+Math.min(progress.next_offset+2,progress.total)+" 条…";
+       googleStatus.textContent=(translationEngine.value==="deepl"?"DeepL":"Google")+" 初译：正在处理第 "+(progress.next_offset+1)+"–"+Math.min(progress.next_offset+2,progress.total)+" 条…";
        batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef,provider:translationEngine.value});
        progress={next_offset:batch.next_offset,total:batch.total,failures:batch.failures,done:batch.done};
        googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"批次已保存",startedAt);
@@ -1190,7 +1202,7 @@ async function show(path,tr){
      finally{
       if(googleTicker)clearInterval(googleTicker);googleTicker=null;
       googleProgressUpdate(progress.next_offset,progress.total,progress.failures,googlePaused?"已暂停":phase,startedAt);
-      googleBusy=false;googleBtn.disabled=false;googlePause.disabled=true;
+      googleBusy=false;googleBtn.disabled=false;googlePause.disabled=true;translationEngine.disabled=false;
       if(progress.failures)googleRetry.disabled=false;
      }
     };
