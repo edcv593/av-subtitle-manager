@@ -17,6 +17,8 @@ def plan(video,subtitle_names,code=None,status=None,candidates=0):
   data.update(action="review",steps=[{"id":"inspect","title":"核查已有中文字幕","status":"ready"},{"id":"review","title":"按需预览和优化","status":"manual"}])
  elif japanese:
   data.update(action="translate",steps=[{"id":"reference","title":"使用已有日语字幕","status":"ready"},{"id":"translate","title":"Google 初译与 AI 校对","status":"manual"},{"id":"save","title":"预览并确认保存","status":"manual"}])
+ elif names:
+  data.update(action="review",steps=[{"id":"inspect","title":"识别并审核已有字幕","status":"ready"},{"id":"review","title":"人工确认语言和质量","status":"manual"}])
  elif candidates:
   data.update(action="review",steps=[{"id":"candidates","title":"审查已下载候选字幕","status":"ready"},{"id":"save","title":"确认后保存","status":"manual"}])
  elif not code:
