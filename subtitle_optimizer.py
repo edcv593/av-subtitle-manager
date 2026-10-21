@@ -112,7 +112,7 @@ def reference_for_window(raw,ext,reference_raw,reference_ext,max_chars=6000,offs
  selected=[]
  if reference_ext in ("srt","vtt"):
   # Match each complete block; do not include a partial subtitle at a batch boundary.
-  blocks=re.split(r"\\r?\\n\\s*\\r?\\n",text)
+  blocks=re.split(r"\r?\n\s*\r?\n",text)
   for block in blocks:
    times=timeline.cues(block.encode("utf-8"),reference_ext)
    if times and any(a<=window_end and b>=window_start for a,b in times):
@@ -138,7 +138,7 @@ def reference_for_window(raw,ext,reference_raw,reference_ext,max_chars=6000,offs
    a=timeline.stamp(fields[start_index]);b=timeline.stamp(fields[end_index])
    if a is not None and b is not None and a<=window_end and b>=window_start:
     selected.append(line)
- return ("\\n\\n" if reference_ext in ("srt","vtt") else "\\n").join(selected)[:max_chars]
+ return ("\n\n" if reference_ext in ("srt","vtt") else "\n").join(selected)[:max_chars]
 
 def ai_batch(raw,offset=0,max_chars=12000):
  """Return a complete-line text window and next offset, without touching source bytes."""
