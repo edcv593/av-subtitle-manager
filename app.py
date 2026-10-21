@@ -674,6 +674,57 @@ async function show(path,tr){
     cell.append(el("p","现有字幕："+sub.name+" · "+(sub.error||((sub.valid?"格式有效":"格式异常")+" · 质量 "+(sub.quality?sub.quality.score:"?")+" 分 · "+(sub.quality?sub.quality.reasons.join("；"):"")+" · "+sub.timeline.reason))));
    }
    if(subs.items.length)cell.append(el("p","提示：时间轴检查不能确认对白同步，建议在播放器中实际试看。"));
+   if(subs.items.length===1&&!subs.items[0].error){
+    let panel=el("div");panel.style.border="1px solid #d5dce5";panel.style.padding="12px";panel.style.margin="12px 0";
+    panel.append(el("h4","字幕优化 · 保持原时间轴 · 保存前预览"));
+    let simplify=el("input");simplify.type="checkbox";simplify.checked=true;
+    let punct=el("input");punct.type="checkbox";punct.checked=true;
+    let options=el("div");options.append(simplify,document.createTextNode(" OpenCC 统一简体　"),punct,document.createTextNode(" 规范标点与空格"));panel.append(options);
+    let result=el("div");result.style.whiteSpace="pre-wrap";
+    let previewBtn=el("button","预览修改差异");
+    let aiBtn=el("button","可选 AI 润色建议");
+    let sceneBtn=el("button","场景一致性检查说明");
+    let applyBtn=el("button","确认保存并备份");applyBtn.disabled=true;
+    let pending=null;let replacements={};
+    let controls=el("div");controls.append(previewBtn,aiBtn,sceneBtn,applyBtn);panel.append(controls,result);
+    let config=()=>({path,simplify:simplify.checked,punctuation:punct.checked,replacements});
+    let preview=async()=>{
+     applyBtn.disabled=true;pending=null;result.replaceChildren(el("p","正在分析字幕文本…"));
+     try{
+      let out=await api("/api/subtitles/optimize/preview","POST",config());
+      pending=out;result.replaceChildren(el("p","共修改 "+out.changed+" 行 · 时间轴："+(out.timeline_unchanged?"未改变":"异常")+" · "+(out.truncated?"仅显示前60条":"显示全部差异")));
+      for(let c of out.changes){let line=el("p","原文："+c.before+"\n优化："+c.after);line.style.whiteSpace="pre-wrap";result.append(line)}
+      if(!out.changed)result.append(el("p","没有需要修改的文字"));
+      applyBtn.disabled=out.changed===0;
+     }catch(e){result.replaceChildren(el("p","预览失败："+e.message))}
+    };
+    previewBtn.onclick=preview;
+    simplify.onchange=()=>{pending=null;applyBtn.disabled=true};
+    punct.onchange=()=>{pending=null;applyBtn.disabled=true};
+    sceneBtn.onclick=()=>{result.replaceChildren(el("p","远程 NAS 不读取视频或音频，无法自动核对场景。建议对照播放器中的对白与字幕；仅凭文本分析不能确认译文准确。"))};
+    aiBtn.onclick=async()=>{
+     aiBtn.disabled=true;result.replaceChildren(el("p","正在请求 AI 文本建议（不会自动保存）…"));
+     try{
+      let out=await api("/api/subtitles/optimize/ai","POST",{path});
+      result.replaceChildren(el("p",out.notice));
+      for(let suggestion of out.suggestions){
+       let item=el("div");let check=el("input");check.type="checkbox";
+       check.onchange=()=>{if(check.checked)replacements[suggestion.before]=suggestion.after;else delete replacements[suggestion.before];pending=null;applyBtn.disabled=true};
+       item.append(check,document.createTextNode(" "+suggestion.before+" → "+suggestion.after));result.append(item)
+      }
+      result.append(el("p","勾选接受的建议后，点击预览修改差异再保存。"));
+     }catch(e){result.replaceChildren(el("p","AI 建议不可用："+e.message))}
+     finally{aiBtn.disabled=false}
+    };
+    applyBtn.onclick=async()=>{
+     if(!pending||!confirm("确认备份原字幕并保存优化结果？时间轴将保持不变。"))return;
+     applyBtn.disabled=true;
+     try{let out=await api("/api/subtitles/optimize/apply","POST",{...config(),original_sha256:pending.original_sha256,optimized_sha256:pending.optimized_sha256});msg("字幕优化成功，修改 "+out.changed+" 行；备份："+out.backup);await render()}
+     catch(e){result.append(el("p","保存失败："+e.message));applyBtn.disabled=false}
+    };
+    cell.append(panel);
+   }
+
    for(let name of subs.backups){
     let d=el("div","备份："+name+" ");
     let restore=el("button","恢复此备份");
