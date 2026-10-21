@@ -657,7 +657,7 @@ async function show(path,tr){
     discover.disabled=true;discover.textContent="正在检索及验证…";
     try{
      let out=await api("/api/candidates/discover","POST",{path});
-     let diagnostics=Object.entries(out.stats||{}).map(([k,v])=>k+"：页面 "+v.pages+" / 链接 "+v.download_links+" / 下载 "+v.downloaded+" / 通过 "+v.accepted+" / 拒绝 "+v.rejected+(out.errors[k]?"；原因："+out.errors[k]:"")).join(" | ");
+     let diagnostics=Object.entries(out.stats||{}).map(([k,v])=>k+"：搜索链接 "+((out.search_stats||{})[k]?.links_seen??0)+" / 匹配页面 "+v.pages+" / 字幕链接 "+v.download_links+" / 下载 "+v.downloaded+" / 通过 "+v.accepted+" / 拒绝 "+v.rejected+(out.errors[k]?"；原因："+out.errors[k]:"")).join(" | ");
      msg("外部搜索完成，新增 "+out.items.length+" 个候选。"+diagnostics);
      cell.append(el("p","搜索诊断："+diagnostics));
      await render();
