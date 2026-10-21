@@ -832,11 +832,16 @@ async def compare_subtitle_review(request:Request):
    batch["matched"]=sum(bool(x["references"]) for x in batch["rows"])
    batch["notice"]="仅使用文本和有时间重叠的参考证据；不读取视频，不自动修改。匹配不足的条目不产生 AI 建议。"
    if body.get("ai",False):
-    key,model,endpoint=ai_provider_settings.credentials(DATA)
-    if not key:raise ValueError("请先在 AI 设置中保存 DeepSeek API Key")
-    # Existing replacement engine modifies unique whole text lines only.
-    lines=raw.decode("utf-8-sig","replace").splitlines()
-    batch["suggestions"]=await asyncio.to_thread(subtitle_compare.ai_review,batch["rows"],key,model,endpoint,lines)
+    if not batch["matched"]:
+     batch["suggestions"]=[]
+     batch["notice"]="当前批次没有可靠对齐的参考字幕，已跳过 AI 请求；可检查字幕是否存在整体时间偏移。"
+    else:
+     key,model,endpoint=ai_provider_settings.credentials(DATA)
+     if not key:raise ValueError("请先在 AI 设置中保存 DeepSeek API Key")
+     lines=raw.decode("utf-8-sig","replace").splitlines()
+     try:
+      batch["suggestions"]=await asyncio.to_thread(subtitle_compare.ai_review,batch["rows"],key,model,endpoint,lines)
+     except ValueError as exc:raise HTTPException(502,"AI 服务返回异常："+str(exc)[:180]) from exc
    return batch
   except HTTPException:raise
   except (ValueError,UnicodeError,OSError) as exc:raise HTTPException(422,str(exc)[:200])
