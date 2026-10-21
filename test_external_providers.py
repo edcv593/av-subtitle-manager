@@ -63,6 +63,17 @@ class ProviderTests(unittest.TestCase):
   html=(b'<a href="/download_sub.php?subid=136641&amp;revid=1">Download SRT</a>'
         b'<a href="https://evil.example/file.srt">Download</a>')
   self.assertEqual(avsubtitles_reference_downloads(url,html),["https://www.avsubtitles.com/download_sub.php?subid=136641&revid=1"])
+ def test_avsubtitles_real_revid_download_url(self):
+  from external_providers import avsubtitles_reference_downloads
+  detail="https://www.avsubtitles.com/movie83051/ipzz-791--mitsuri-nagahama-2026/subtitles/ja/136176"
+  download="https://www.avsubtitles.com/download_sub.php?subid=136176&revid=20260901093801"
+  html=('<button data-url="/download_sub.php?subid=136176&amp;revid=20260901093801">Download</button>').encode()
+  self.assertEqual(avsubtitles_reference_downloads(detail,html),[download])
+ def test_avsubtitles_reject_mismatched_subid(self):
+  from external_providers import avsubtitles_reference_downloads
+  detail="https://www.avsubtitles.com/movie83051/ipzz-791--mitsuri-nagahama-2026/subtitles/ja/136176"
+  html=b'<a href="/download_sub.php?subid=136641&amp;revid=20260901093801">Download</a>'
+  self.assertEqual(avsubtitles_reference_downloads(detail,html),[])
  def test_avsubtitles_reject_non_japanese_detail(self):
   from external_providers import avsubtitles_reference_downloads
   with self.assertRaises(ValueError):
