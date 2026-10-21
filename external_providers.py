@@ -22,6 +22,7 @@ def indexed_pages(number,fetch_text,max_pages=5):
  found={};errors={}
  for source,domain in SITES.items():
   query="site:"+domain+" "+number
+  # Keep the search query simple to avoid escaped-quote syntax regressions.
   url="https://www.bing.com/search?"+urllib.parse.urlencode({"q":query,"format":"rss"})
   try:
    data=fetch_text(url,250000)
