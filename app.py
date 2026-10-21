@@ -1096,7 +1096,7 @@ async function show(path,tr){
       googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"读取已保存进度",startedAt);
       googleShowErrors(progress);
       if(progress.done){googleStatus.textContent="已找到完成的翻译草稿，正在获取结果…";}
-      let batch=null,round=0;
+      let batch=null,round=0,emptyBatches=0;
       while(!progress.done){
        if(googlePaused){googleStatus.textContent="已暂停；"+progress.next_offset+"/"+progress.total+" 条已保存。点击「继续翻译」可恢复。";googleBtn.textContent="继续翻译";return}
        phase="Google 请求中（单批最多 2 条，等待网络响应）";
@@ -1104,6 +1104,8 @@ async function show(path,tr){
        batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
        progress={next_offset:batch.next_offset,total:batch.total,failures:batch.failures,done:batch.done};
        googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"批次已保存",startedAt);
+       emptyBatches=batch.translated===0?emptyBatches+1:0;
+       if(emptyBatches>=3){let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});googleShowErrors(v);googleStatus.textContent="连续 3 批没有翻译成功，已自动暂停，可能是 Google 限流或代理异常。请先检查失败原因，稍后再继续。";googleBtn.textContent="继续翻译";phase="连续失败已暂停";return}
        if(++round>10000)throw Error("达到翻译批次安全上限");
       }
       if(!batch)batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
