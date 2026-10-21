@@ -816,6 +816,9 @@ async function show(path,tr){
      finally{refButton.disabled=false}
     };
     panel.append(refInfo,refInput,refButton);
+    let autoBtn=el("button","一键获取日语参考并整片 AI 校对");
+    let autoStatus=el("p","自动流程不会覆盖原字幕；AI 建议需人工勾选并预览保存。");
+    panel.append(autoBtn,autoStatus);
     let sceneBtn=el("button","场景一致性检查说明");
     let applyBtn=el("button","确认保存并备份");applyBtn.disabled=true;
     let pending=null;let replacements={};
@@ -854,6 +857,33 @@ async function show(path,tr){
       result.append(el("p","勾选接受的建议后，点击预览修改差异再保存。"));
      }catch(e){result.replaceChildren(el("p","AI 建议不可用："+e.message))}
      finally{aiBtn.disabled=false}
+    };
+    autoBtn.onclick=async()=>{
+     if(!confirm("自动检索并下载日语参考字幕，然后将整部中文字幕分批发送到已配置的 AI 服务。仅生成待审核建议，不会自动保存。确认继续？"))return;
+     autoBtn.disabled=true;aiBtn.disabled=true;aiOffset=0;aiFinished=false;aiSourceHash=null;
+     result.replaceChildren();
+     try{
+      autoStatus.textContent="正在搜索并验证日语参考字幕…";
+      let found=await api("/api/subtitles/reference/auto","POST",{path});
+      if(found.reference_id){referenceId=found.reference_id;refInfo.textContent="自动获取日语参考字幕："+referenceId}
+      else{autoStatus.textContent="未获取到日语参考字幕，将仅依据中文字幕校对。"+(found.errors||[]).join("；").slice(0,200)}
+      let batches=0;let total=0;
+      while(true){
+       autoStatus.textContent="AI 校对中：已处理 "+batches+" 批，已获得 "+total+" 条建议…";
+       let out=await api("/api/subtitles/optimize/ai","POST",{path,reference_id:referenceId,offset:aiOffset,original_sha256:aiSourceHash});
+       aiSourceHash=out.original_sha256;aiOffset=out.next_offset;aiFinished=out.done;batches++;
+       for(let suggestion of out.suggestions){
+        total++;let item=el("div");let check=el("input");check.type="checkbox";
+        check.onchange=()=>{if(check.checked)replacements[suggestion.before]=suggestion.after;else delete replacements[suggestion.before];pending=null;applyBtn.disabled=true};
+        item.append(check,document.createTextNode(" "+suggestion.before+" → "+suggestion.after));result.append(item);
+       }
+       if(out.done)break;
+       if(batches>=100)throw Error("达到 100 批安全上限，请检查字幕长度");
+      }
+      autoStatus.textContent="校对完成："+batches+" 批，"+total+" 条建议。请勾选后预览差异，再确认保存。";
+      aiBtn.textContent="重新从头校对";
+     }catch(e){autoStatus.textContent="自动校对中断："+e.message+"；已返回的建议仍可审核，重新点击将从头执行。"}
+     finally{autoBtn.disabled=false;aiBtn.disabled=false}
     };
     applyBtn.onclick=async()=>{
      if(!pending||!confirm("确认备份原字幕并保存优化结果？时间轴将保持不变。"))return;
