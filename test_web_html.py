@@ -24,6 +24,17 @@ class WebHTMLTests(unittest.TestCase):
   self.assertIn('"/api/subtitles/translate/retry-failed"',html)
   self.assertIn('重试翻译失败的条目',html)
   self.assertIn('连续 3 批没有翻译成功',html)
+ def test_deepl_ui_and_api_integrated(self):
+  tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
+  html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
+  self.assertIn('DeepL API（Free / Pro）',html)
+  self.assertIn('id="deeplKey"',html)
+  self.assertIn('"/api/settings/deepl"',html)
+  self.assertIn('provider:translationEngine.value',html)
+  self.assertIn('"/api/subtitles/translate/status"',html)
+  code=pathlib.Path("app.py").read_text("utf-8")
+  self.assertIn('subtitle_deepl.translate',code)
+  self.assertIn('translation_draft_path(p,reference_id,provider)',code)
  def test_google_translation_progress_is_visible(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
