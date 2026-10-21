@@ -1,4 +1,4 @@
-import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.parse,urllib.error,ipaddress,socket,hashlib,zipfile,io
+import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.parse,urllib.error,ipaddress,socket,hashlib,zipfile,io,asyncio
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
@@ -68,7 +68,7 @@ def fetch_public_search(url,limit=250000):
    raise ValueError("Search destination is not public")
   req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36","Accept":"application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5","Accept-Language":"zh-CN,zh;q=0.9,en;q=0.7","Cache-Control":"no-cache"})
   try:
-   with urllib.request.build_opener(NoRedirect()).open(req,timeout=20) as resp:
+   with urllib.request.build_opener(NoRedirect()).open(req,timeout=12) as resp:
     data=resp.read(limit+1)
     if len(data)>limit:raise ValueError("Search response too large")
     return data
@@ -346,12 +346,12 @@ async def discover_external(request:Request):
   if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
   source=body.get("source")
   if source is not None and source not in external_providers.SITES:raise HTTPException(400,"未知字幕来源")
-  pages,errors,search_stats=external_providers.native_search(number,fetch_site_search,source=source)
+  pages,errors,search_stats=await asyncio.to_thread(external_providers.native_search,number,fetch_site_search,source=source)
   imported=[];seen=set();stats={k:{"pages":len(v),"download_links":0,"downloaded":0,"accepted":0,"rejected":0} for k,v in pages.items()}
   for source,urls in pages.items():
    for page_url in urls[:3]:
     try:
-     page=fetch(page_url,250000)
+     page=await asyncio.to_thread(fetch,page_url,250000)
      links=external_providers.detail_downloads(source,page_url,page)
      stats[source]["download_links"]+=len(links)
      if not links:errors[source]="详情页没有可解析的中文字幕下载链接"
@@ -359,7 +359,7 @@ async def discover_external(request:Request):
       if link in seen:continue
       seen.add(link)
       try:
-       raw=fetch(link,LIMIT)
+       raw=await asyncio.to_thread(fetch,link,LIMIT)
        stats[source]["downloaded"]+=1
        filename=Path(urllib.parse.urlsplit(link).path).name
        if zipfile.is_zipfile(io.BytesIO(raw)):filename+=".zip"
