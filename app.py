@@ -1,4 +1,4 @@
-import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.parse,ipaddress,socket,hashlib,zipfile,io
+import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.parse,urllib.error,ipaddress,socket,hashlib,zipfile,io
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
