@@ -57,6 +57,16 @@ class ProviderTests(unittest.TestCase):
   self.assertEqual(len(found),2)
   self.assertTrue(found[0].endswith("/136641"))
   self.assertTrue(found[1].endswith("/136176"))
+ def test_avsubtitles_japanese_detail_downloads(self):
+  from external_providers import avsubtitles_reference_downloads
+  url="https://www.avsubtitles.com/movie83051/ipzz-791--mitsuri-nagahama-2026/subtitles/ja/136641"
+  html=(b'<a href="/download_sub.php?subid=136641&amp;revid=1">Download SRT</a>'
+        b'<a href="https://evil.example/file.srt">Download</a>')
+  self.assertEqual(avsubtitles_reference_downloads(url,html),["https://www.avsubtitles.com/download_sub.php?subid=136641&revid=1"])
+ def test_avsubtitles_reject_non_japanese_detail(self):
+  from external_providers import avsubtitles_reference_downloads
+  with self.assertRaises(ValueError):
+   avsubtitles_reference_downloads("https://www.avsubtitles.com/movie83051/ipzz-791/subtitles/zh/12",b"")
  def test_avsubtitles_zip_link(self):
   page=b'<a href="/download_sub.php?subid=10845&amp;revid=1">SSIS-334-zh.zip</a>'
   links=detail_downloads("AVSubtitles","https://www.avsubtitles.com/subtitles.php?subid=10845",page)
