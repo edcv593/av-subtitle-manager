@@ -32,7 +32,8 @@ class WebHTMLTests(unittest.TestCase):
  def test_comparison_previews_alignment_before_ai(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
-  self.assertIn("字幕对齐成功：本批 ",html)
+  self.assertIn("本批匹配 ",html)
+  self.assertIn("正在请求 AI",html)
   self.assertIn("aligned.matched?await api",html)
   self.assertIn('ai:false',html)
  def test_existing_chinese_has_primary_evidence_review(self):
@@ -41,7 +42,8 @@ class WebHTMLTests(unittest.TestCase):
   self.assertIn("智能校对现有中文字幕（优先）",html)
   self.assertIn('"/api/subtitles/compare/review"',html)
   self.assertIn("高级工具：整片 Google/DeepL 初译及旧版 AI 校对",html)
-  self.assertIn("开始多字幕 AI 校对",html)
+  self.assertIn("一键扫描整片并汇总建议",html)
+  self.assertIn("继续上次校对",html)
  def test_deepl_ui_and_api_integrated(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
