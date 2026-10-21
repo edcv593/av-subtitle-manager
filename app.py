@@ -1177,7 +1177,7 @@ async function show(path,tr){
        let item=el("div");item.style.borderBottom="1px solid #e4e7ed";item.style.padding="8px 0";
        let check=el("input");check.type="checkbox";
        check.onchange=()=>{if(check.checked)replacements[suggestion.before]=suggestion.after;else delete replacements[suggestion.before];pending=null;applyBtn.disabled=true};
-       let explanation=el("p","原译："+suggestion.before+" → 建议："+suggestion.after+"\n理由："+suggestion.reason);
+       let explanation=el("p","原译："+suggestion.before+" → 建议："+suggestion.after+"\\n理由："+suggestion.reason);
        explanation.style.whiteSpace="pre-wrap";
        item.append(check,explanation);compareResults.append(item);
       }
