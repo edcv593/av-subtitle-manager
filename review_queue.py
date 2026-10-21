@@ -23,6 +23,8 @@ def init(c):
   created REAL NOT NULL,
   updated REAL NOT NULL
  )""")
+ if "phase" not in [row[1] for row in c.execute("PRAGMA table_info(review_jobs)")]:
+  c.execute("ALTER TABLE review_jobs ADD COLUMN phase TEXT NOT NULL DEFAULT ''")
  c.execute("CREATE INDEX IF NOT EXISTS review_jobs_status_idx ON review_jobs(status,id)")
  c.execute("CREATE UNIQUE INDEX IF NOT EXISTS review_jobs_one_active ON review_jobs(video_path) WHERE status IN ('pending','running','paused')")
  c.commit()
@@ -51,21 +53,25 @@ def claim(c):
  # BEGIN IMMEDIATE prevents two processes claiming the same task.
  c.execute("BEGIN IMMEDIATE")
  row=c.execute("SELECT * FROM review_jobs WHERE status='pending' ORDER BY id LIMIT 1").fetchone()
- if row:c.execute("UPDATE review_jobs SET status='running',updated=? WHERE id=?",(time.time(),row["id"]))
+ if row:c.execute("UPDATE review_jobs SET status='running',phase='正在准备字幕',updated=? WHERE id=?",(time.time(),row["id"]))
  c.commit()
  return dict(row) if row else None
+
+def set_phase(c,id,phase):
+ c.execute("UPDATE review_jobs SET phase=?,updated=? WHERE id=? AND status='running'",(str(phase)[:160],time.time(),id))
+ c.commit()
 
 def checkpoint(c,id,sha,offset,total,matched,suggestions):
  row=c.execute("SELECT status FROM review_jobs WHERE id=?",(id,)).fetchone()
  if not row or row["status"]!="running":return False
- c.execute("UPDATE review_jobs SET original_sha256=?,offset=?,total=?,matched=?,suggestions=?,updated=? WHERE id=? AND status='running'",
+ c.execute("UPDATE review_jobs SET original_sha256=?,offset=?,total=?,matched=?,suggestions=?,phase='已保存本批进度',updated=? WHERE id=? AND status='running'",
            (sha,offset,total,matched,json.dumps(suggestions,ensure_ascii=False),time.time(),id))
  c.commit()
  return True
 
 def finish(c,id,status,error="",backup="",changed=0):
  if status not in ("reviewing","completed","failed","cancelled"):raise ValueError("无效的完成状态")
- c.execute("UPDATE review_jobs SET status=?,error=?,backup=?,changed=?,updated=? WHERE id=? AND status='running'",
+ c.execute("UPDATE review_jobs SET status=?,error=?,backup=?,changed=?,phase='',updated=? WHERE id=? AND status='running'",
            (status,error[:500],backup,changed,time.time(),id))
  c.commit()
 
@@ -82,7 +88,7 @@ def action(c,id,command):
  next_status=transitions.get(command,{}).get(current)
  if not next_status:raise ValueError("当前状态不允许该操作")
  if command=="retry":
-  c.execute("UPDATE review_jobs SET status=?,error='',updated=? WHERE id=?",(next_status,time.time(),id))
+  c.execute("UPDATE review_jobs SET status=?,error='',phase='',updated=? WHERE id=?",(next_status,time.time(),id))
  else:c.execute("UPDATE review_jobs SET status=?,updated=? WHERE id=?",(next_status,time.time(),id))
  c.commit()
  return summarize(c.execute("SELECT * FROM review_jobs WHERE id=?",(id,)).fetchone())
