@@ -338,11 +338,11 @@ def review_worker_one(job):
   with closing(db()) as c:
    p=video(c,job["video_path"])
    if SKIP_C and marked(p.name):raise ValueError("-C 影片不允许修改")
-   files=subtitle_files.subtitles_for(p)
-   if len(files)!=1:
-    review_queue.finish(c,job_id,"reviewing","需要恰好一份外挂中文字幕；请先在影片审核中选择主字幕")
+   target,reason=subtitle_files.choose_chinese(p)
+   if target is None:
+    review_queue.finish(c,job_id,"reviewing",reason+"；请先在影片审核中选择主字幕")
     return
-   target=files[0];ext=target.suffix.lower().lstrip(".")
+   ext=target.suffix.lower().lstrip(".")
    if target.stat().st_size>LIMIT:raise ValueError("字幕文件过大")
    raw=target.read_bytes()
    original_sha=subtitle_optimizer.digest(raw)
@@ -406,8 +406,8 @@ def review_worker_one(job):
   with closing(db()) as c:
    row=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
    if not row or row["status"]!="running":return
-   latest=subtitle_files.subtitles_for(p)
-   if len(latest)!=1 or latest[0]!=target or subtitle_optimizer.digest(target.read_bytes())!=original_sha:
+   latest,reason=subtitle_files.choose_chinese(p)
+   if latest!=target or subtitle_optimizer.digest(target.read_bytes())!=original_sha:
     raise ValueError("主字幕已发生变化，已停止自动替换")
    optimized,changes=subtitle_optimizer.optimize(raw,ext,True,True,edits)
    if timeline.cues(raw,ext)!=timeline.cues(optimized,ext):raise ValueError("时间轴发生变化，拒绝保存")
@@ -416,7 +416,7 @@ def review_worker_one(job):
    if not changes:
     review_queue.finish(c,job_id,"completed","没有需要保存的变化")
     return
-   saved,backup=subtitle_files.replace(p,optimized,ext)
+   saved,backup=subtitle_files.replace_selected(p,target,optimized,ext)
    reset_retry(c,p);record(c,p,code(p.name),"existing","NAS review optimized | backup="+backup.name)
    review_queue.finish(c,job_id,"completed","",backup.name,len(changes))
  except Exception as exc:
