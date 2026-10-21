@@ -120,7 +120,9 @@ def avsubtitles_reference_pages(number,raw,max_items=12):
   parsed=urllib.parse.urlsplit(url)
   if parsed.scheme!="https" or parsed.hostname not in ("avsubtitles.com","www.avsubtitles.com"):continue
   if not re.fullmatch(r"/movie[0-9]+/[^/?#]+/subtitles/ja/[0-9]+/?",parsed.path,re.I):continue
-  if film_code(parsed.path)!=number:continue
+  # The first token is movie83051; match the actual title code in the slug.
+  slug=urllib.parse.unquote(parsed.path.split("/")[2])
+  if number not in {(m.group(1)+"-"+m.group(2)).upper() for m in CODE_RE.finditer(slug)}:continue
   if url not in results:results.append(url)
   if len(results)>=max_items:break
  return results
