@@ -1349,9 +1349,9 @@ async function reviewQueue(){
   const jobs=await api("/api/review/jobs");
   const items=videos.items||[];
   panel.replaceChildren(el("h3","NAS 后台校对队列 · 待审核影片 "+items.length+" 部"));
-  const help=el("p","任务在 NAS 后台执行，关闭网页后继续；进度和建议保存在 /data/subtitle.db。自动检索日语参考字幕，逐批校对现有中文；不读取视频音频。");
-  const auto=el("input");auto.type="checkbox";auto.checked=false;
-  const autoLabel=el("label");autoLabel.append(auto,document.createTextNode(" 校对完成后自动应用无冲突建议并备份（可选）"));
+  const help=el("p","任务在 NAS 后台执行，关闭网页后继续；先获取日语字幕，再下载和比较中文字幕，DeepSeek 对照优化，最后归档中间字幕并在媒体目录仅保留一份优化版；不读取视频音频。");
+  const auto=el("input");auto.type="checkbox";auto.checked=true;
+  const autoLabel=el("label");autoLabel.append(auto,document.createTextNode(" 自动生成最终优化字幕（归档原字幕，仅保留一份）"));
   const start=el("button","将全部待审核影片加入 NAS 队列");start.className="primary";
   const refresh=el("button","刷新任务状态");
   const retryLegacy=el("button","一键重试旧版拦截任务");
@@ -1404,7 +1404,7 @@ async function reviewQueue(){
   }
   start.onclick=async()=>{
    if(!items.length){progress.textContent="没有待审核影片";return}
-   if(!confirm("把 "+items.length+" 部影片加入 NAS 后台队列。"+(auto.checked?"会自动备份并保存通过校验的字幕修改。":"只收集建议，不自动替换。")+" 是否继续？"))return;
+   if(!confirm("把 "+items.length+" 部影片加入 NAS 后台队列。"+(auto.checked?"会归档原字幕并生成唯一优化版字幕。":"仅收集建议，不生成最终文件。")+" 是否继续？"))return;
    start.disabled=true;progress.textContent="正在将 "+items.length+" 部影片提交给 NAS 队列…";
    try{
     const result=await api("/api/review/jobs","POST",{paths:items.map(x=>x.path),auto_apply:auto.checked});
