@@ -919,7 +919,7 @@ async function saveAiSettings(){try{let v=await api("/api/settings/ai","POST",{p
 async function testAiSettings(){document.getElementById("aiSettingsStatus").textContent="正在连接 AI 服务商…";try{let v=await api("/api/settings/ai/test","POST",{});document.getElementById("aiSettingsStatus").textContent=v.message}catch(e){document.getElementById("aiSettingsStatus").textContent=e.message}}
 async function clearAiKey(){if(!confirm("确定清除服务器保存的 AI API Key？"))return;try{await api("/api/settings/ai","POST",{provider:document.getElementById("aiProvider").value,model:document.getElementById("aiModel").value,clear_key:true});await loadAiSettings()}catch(e){msg(e.message)}}
 function connect(){token=document.getElementById("token").value;sessionStorage.setItem("subtitle_token",token);load();loadAiSettings()}
-async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");let b=el("button","一键处理");b.className="primary";b.onclick=()=>runWorkflow(x.path,tr,b);actions.append(b);tr.append(name,code,status,actions);tbody.append(tr)}msg(scanInfo(s))}catch(e){msg("刷新失败："+e.message)}}
+async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");let b=el("button","一键处理");b.className="primary";b.onclick=()=>runWorkflow(x.path,tr,b);actions.append(b);tr.append(name,code,status,actions);tbody.append(tr)}let last=sessionStorage.getItem("subtitle_active_video");if(last&&!document.getElementById("activeCandidateRow")){let row=Array.from(tbody.rows).find(row=>row.cells[0]&&row.cells[0].title.split("\\n")[0]===last);if(row)show(last,row)}msg(scanInfo(s))}catch(e){msg("刷新失败："+e.message)}}
 function scanInfo(s){
  let p=s.scan_progress||{},now=Date.now()/1000;
  let elapsed=p.started_at?Math.floor(((s.scan_running?now:p.finished_at||now)-p.started_at)/60):0;
@@ -980,7 +980,8 @@ async function runWorkflow(path,tr,button){
 }
 async function show(path,tr){
  let prev=document.getElementById("activeCandidateRow");
- if(prev){let same=prev.previousElementSibling===tr;prev.remove();if(same)return}
+ if(prev){let same=prev.previousElementSibling===tr;prev.remove();if(same){sessionStorage.removeItem("subtitle_active_video");return}}
+ sessionStorage.setItem("subtitle_active_video",path);
  let detail=el("tr");detail.id="activeCandidateRow";
  let cell=el("td");cell.colSpan=4;cell.style.background="#f7f9fd";cell.style.padding="16px";
  detail.append(cell);tr.after(detail);
