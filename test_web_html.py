@@ -24,6 +24,13 @@ class WebHTMLTests(unittest.TestCase):
   self.assertIn('"/api/subtitles/translate/retry-failed"',html)
   self.assertIn('重试翻译失败的条目',html)
   self.assertIn('连续 3 批没有翻译成功',html)
+ def test_existing_chinese_has_primary_evidence_review(self):
+  tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
+  html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
+  self.assertIn("智能校对现有中文字幕（优先）",html)
+  self.assertIn('"/api/subtitles/compare/review"',html)
+  self.assertIn("高级工具：整片 Google/DeepL 初译及旧版 AI 校对",html)
+  self.assertIn("开始多字幕 AI 校对",html)
  def test_deepl_ui_and_api_integrated(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
