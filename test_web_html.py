@@ -29,6 +29,24 @@ class WebHTMLTests(unittest.TestCase):
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
   for word in ["一键扫描整片并汇总建议","暂停（当前批次结束）","继续上次校对","subtitle_compare_progress:","while(!compareStop)","compareSave(ids)"]:
    self.assertIn(word,html)
+ def test_automatic_review_saves_only_after_digest_and_timeline_checks(self):
+  tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
+  html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
+  self.assertIn("compareAutoSave.checked=false",html)
+  self.assertIn("let conflict=new Set()",html)
+  self.assertIn("delete edits[key]",html)
+  self.assertIn("verified.original_sha256!==compareSha",html)
+  self.assertIn('api("/api/subtitles/optimize/preview","POST",configAuto)',html)
+  self.assertIn('api("/api/subtitles/optimize/apply","POST"',html)
+  self.assertIn("saved.backup",html)
+ def test_pending_review_bulk_queue_is_non_destructive(self):
+  tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
+  html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
+  self.assertIn("待审核列表",html)
+  self.assertIn('new URLSearchParams({status:"review"})',html)
+  self.assertIn("一键批量检索待审核",html)
+  self.assertIn('api("/api/candidates/discover","POST",{path:x.path})',html)
+  self.assertIn("不会直接覆盖已有字幕",html)
  def test_comparison_previews_alignment_before_ai(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
