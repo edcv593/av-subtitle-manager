@@ -371,7 +371,11 @@ async def discover_external(request:Request):
        target=folder/digest
        if not target.exists():target.write_bytes(data)
        name=number+"-zh."+ext
-       c.execute("INSERT OR REPLACE INTO candidates(path,name,url,ext,source) VALUES(?,?,?,?,?)",(str(p),name,local,ext,source))
+       duplicate=c.execute("SELECT source FROM candidates WHERE path=? AND url=?",(str(p),local)).fetchone()
+       if duplicate:
+        stats[source]["rejected"]+=1
+        continue
+       c.execute("INSERT OR IGNORE INTO candidates(path,name,url,ext,source) VALUES(?,?,?,?,?)",(str(p),name,local,ext,source))
        stats[source]["accepted"]+=1
        imported.append({"source":source,"name":name,"score":quality["score"],"page":page_url})
       except (OSError,ValueError,zipfile.BadZipFile) as exc:errors[source]=str(exc)[:140]
