@@ -10,7 +10,7 @@ class OptimizerTests(unittest.TestCase):
   with patch.object(opt,"converter",return_value=type("Converter",(),{"convert":lambda self,s:s.replace("這裡","这里")})()):
    new,changes=opt.optimize(SRT,"srt")
   self.assertIn(b"00:00:01,000 --> 00:00:02,000",new)
-  self.assertIn("这里 很好！".encode(),new)
+  self.assertIn("这里很好！".encode(),new)
   self.assertEqual(len(changes),1)
  def test_ass_header_and_timing_preserved(self):
   with patch.object(opt,"converter",return_value=type("Converter",(),{"convert":lambda self,s:s.replace("這裡","这里")})()):
