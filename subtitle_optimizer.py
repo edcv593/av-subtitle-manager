@@ -79,7 +79,7 @@ def preview(raw,ext,simplify=True,punctuation=True,replacements=None):
  data,changes=optimize(raw,ext,simplify,punctuation,replacements)
  return {"original_sha256":digest(raw),"optimized_sha256":digest(data),"changed":len(changes),"changes":changes[:60],"truncated":len(changes)>60,"original_size":len(raw),"optimized_size":len(data)}
 
-def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini"):
+def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.openai.com/v1/chat/completions"):
  """Optional external text-only suggestions. Never automatically edits files."""
  if not api_key:raise ValueError("未配置字幕润色 API Key")
  _,changes=edit_cues(raw,ext,lambda s:s)
@@ -90,7 +90,7 @@ def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini"):
          "只输出JSON对象，格式为{\"suggestions\":[{\"before\":\"原文\",\"after\":\"建议\"}]}。"
          "最多10条，每条before必须与原文完整一行相同，不修改时间轴。\n"+sample)
  payload=json.dumps({"model":model,"messages":[{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.2,"max_tokens":1200}).encode()
- request=urllib.request.Request("https://api.openai.com/v1/chat/completions",data=payload,headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
+ request=urllib.request.Request(endpoint,data=payload,headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
  with urllib.request.urlopen(request,timeout=40) as response:
   answer=json.loads(response.read(100000))
  body=json.loads(answer["choices"][0]["message"]["content"])
