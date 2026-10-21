@@ -417,17 +417,19 @@ def review_worker_one(job):
   if not reference_id:
    with closing(db()) as c:review_queue.set_phase(c,job_id,"正在检索 AVSubtitles 日语参考字幕（网络请求可能较慢）")
    reference_id=review_auto_reference(p)
-  if not reference_id:
-   with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","未找到可验证的日语参考字幕；请上传参考字幕后重试")
-   return
-  if not re.fullmatch(r"[0-9a-f]{64}\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
-  source=DATA/"reference_subtitles"/reference_id
-  if not source.is_file() or source.stat().st_size>LIMIT:raise ValueError("参考字幕缺失或过大")
-  reference_raw=source.read_bytes()
-  if hashlib.sha256(reference_raw).hexdigest()!=reference_id.split(".")[0]:raise ValueError("参考字幕哈希校验失败")
-  reference_ext=source.suffix.lower().lstrip(".")
-  if not any(subtitle_compare.JAPANESE.search(x["text"]) for x in subtitle_compare.entries(reference_raw,reference_ext)):
-   raise ValueError("参考字幕不包含日语假名，拒绝作为日语原文依据")
+  # Japanese evidence is optional: do not block Chinese proofreading when unavailable.
+  reference_raw=None;reference_ext=None
+  if reference_id:
+   if not re.fullmatch(r"[0-9a-f]{64}\\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
+   source=DATA/"reference_subtitles"/reference_id
+   if not source.is_file() or source.stat().st_size>LIMIT:raise ValueError("参考字幕缺失或过大")
+   reference_raw=source.read_bytes()
+   if hashlib.sha256(reference_raw).hexdigest()!=reference_id.split(".")[0]:raise ValueError("参考字幕哈希校验失败")
+   reference_ext=source.suffix.lower().lstrip(".")
+   if not any(subtitle_compare.JAPANESE.search(x["text"]) for x in subtitle_compare.entries(reference_raw,reference_ext)):
+    raise ValueError("参考字幕不包含日语假名，拒绝作为日语原文依据")
+  else:
+   with closing(db()) as c:review_queue.set_phase(c,job_id,"日语字幕未找到，降级为中文文本校对（不推断日语对白）")
   # Stage 2: compare local and downloaded Chinese subtitle versions.
   with closing(db()) as c:review_queue.set_phase(c,job_id,"日文字幕已获取，正在下载并比较最佳中文字幕")
   base=review_best_chinese(p,reference_raw,reference_ext,job_id)
@@ -439,28 +441,45 @@ def review_worker_one(job):
   if job["original_sha256"] and job["original_sha256"]!=original_sha:raise ValueError("中文基础字幕已变化，请重新创建任务")
   main_entries=subtitle_compare.entries(raw,ext)
   originals={q:hashlib.sha256(q.read_bytes()).hexdigest() for q in subtitle_files.subtitles_for(p)}
-  refs=[(reference_id,reference_raw,reference_ext,0)]
+  refs=[(reference_id,reference_raw,reference_ext,0)] if reference_raw is not None else []
   offset=job["offset"];matched=job["matched"]
   suggestions=json.loads(job["suggestions"])
   if not isinstance(suggestions,list):raise ValueError("校对进度文件异常")
-  with closing(db()) as c:review_queue.set_phase(c,job_id,"参考字幕已就绪，准备 AI 校对")
+  with closing(db()) as c:review_queue.set_phase(c,job_id,"准备日中对照 AI 校对" if refs else "准备中文文本 AI 校对（无日语依据）")
   key,model,endpoint=ai_provider_settings.credentials(DATA)
   if not key:raise ValueError("请先在 AI 设置中配置 API Key")
   allowed=timeline.decode(raw).splitlines()
-  while offset<len(main_entries):
-   with closing(db()) as c:
-    current=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
-    if not current or current["status"]!="running":return
-   with closing(db()) as c:review_queue.set_phase(c,job_id,"正在校对第 "+str(offset+1)+" 条起的字幕")
-   batch=subtitle_compare.review_batch(raw,ext,refs,offset=offset,max_cues=25)
-   hits=sum(bool(x["references"]) for x in batch["rows"])
-   new=subtitle_compare.ai_review(batch["rows"],key,model,endpoint,allowed) if hits else []
-   suggestions.extend(new);matched+=hits
-   previous=offset;offset=batch["next_offset"]
-   if offset<=previous:raise ValueError("校对进度未前进")
-   with closing(db()) as c:
-    if not review_queue.checkpoint(c,job_id,original_sha,offset,batch["total"],matched,suggestions):return
-   time.sleep(0.3)
+  if refs:
+   while offset<len(main_entries):
+    with closing(db()) as c:
+     current=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
+     if not current or current["status"]!="running":return
+    with closing(db()) as c:review_queue.set_phase(c,job_id,"正在对照校对第 "+str(offset+1)+" 条起的字幕")
+    batch=subtitle_compare.review_batch(raw,ext,refs,offset=offset,max_cues=25)
+    hits=sum(bool(x["references"]) for x in batch["rows"])
+    new=subtitle_compare.ai_review(batch["rows"],key,model,endpoint,allowed) if hits else []
+    suggestions.extend(new);matched+=hits
+    previous=offset;offset=batch["next_offset"]
+    if offset<=previous:raise ValueError("校对进度未前进")
+    with closing(db()) as c:
+     if not review_queue.checkpoint(c,job_id,original_sha,offset,batch["total"],matched,suggestions):return
+    time.sleep(0.3)
+  else:
+   # Offset is a character position in the no-reference mode; never mix with cue offsets.
+   total=len(raw.decode("utf-8-sig","replace"))
+   while offset<total:
+    with closing(db()) as c:
+     current=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
+     if not current or current["status"]!="running":return
+    with closing(db()) as c:review_queue.set_phase(c,job_id,"中文文本校对 "+str(offset)+"/"+str(total)+" 字符")
+    sample,next_offset,_=subtitle_optimizer.ai_batch(raw,offset)
+    new=subtitle_optimizer.ai_suggestions(raw,ext,key,model,endpoint,offset=offset)
+    suggestions.extend(new)
+    if next_offset<=offset:raise ValueError("中文校对进度未前进")
+    offset=next_offset
+    with closing(db()) as c:
+     if not review_queue.checkpoint(c,job_id,original_sha,offset,total,matched,suggestions):return
+    time.sleep(0.3)
   if not job["auto_apply"]:
    with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","校对完成，等待人工审核建议")
    return
