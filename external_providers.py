@@ -1,5 +1,6 @@
 """Best-effort public-index discovery. Never trusts search snippets as subtitle downloads."""
 import html
+import json
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -7,7 +8,7 @@ from html.parser import HTMLParser
 
 SITES={"AVSubtitles":"avsubtitles.com","Subtitle Cat":"subtitlecat.com","JAV字幕":"javzimu.com"}
 DETAIL_PATTERNS={
- "AVSubtitles":re.compile(r"(?:/subtitles[.]php[?][^#]*subid=[0-9]+|/movie[0-9]+/[^?#]+/subtitles/[^?#]+/[0-9]+)",re.I),
+ "AVSubtitles":re.compile(r"(?:/subtitles[.]php[?][^#]*subid=[0-9]+|/movie[0-9]+(?:/[^?#]*)?)",re.I),
  "Subtitle Cat":re.compile(r"/subs/\d+/[^?#]+\.html$",re.I),
  "JAV字幕":re.compile(r"/[^?#]+",re.I),
 }
@@ -76,7 +77,7 @@ def detail_downloads(source,url,page,max_links=8):
 SEARCH_ENDPOINTS={
  "AVSubtitles":lambda code:"https://www.avsubtitles.com/search_results.php?"+urllib.parse.urlencode({"search":code,"scope":"title"}),
  "Subtitle Cat":lambda code:"https://www.subtitlecat.com/?"+urllib.parse.urlencode({"search":code}),
- "JAV字幕":lambda code:"https://javzimu.com/?"+urllib.parse.urlencode({"s":code}),
+ "JAV字幕":lambda code:"https://javzimu.com/api/search?"+urllib.parse.urlencode({"name":code}),
 }
 class SearchLinks(HTMLParser):
  def __init__(self):
@@ -91,6 +92,25 @@ class SearchLinks(HTMLParser):
    self.links.append((self.href," ".join(self.parts).strip()))
    self.href=None;self.parts=[]
 
+def javzimu_results(raw,number,max_items=12):
+ """Parse JAV字幕 official-style search JSON; never trust returned download URLs."""
+ try:response=json.loads(raw.decode("utf-8-sig"))
+ except (UnicodeError,ValueError) as exc:raise ValueError("JAV字幕搜索接口未返回有效 JSON") from exc
+ if not isinstance(response,dict) or not isinstance(response.get("data"),list):raise ValueError("JAV字幕搜索接口格式发生变化")
+ found=[]
+ for item in response["data"]:
+  if not isinstance(item,dict):continue
+  name=str(item.get("name") or "")
+  extra=str(item.get("extra_name") or "")
+  if number not in {film_code(name),film_code(extra)}:continue
+  cid=str(item.get("cid") or "")
+  ext=str(item.get("ext") or "srt").lower().lstrip(".")
+  if not cid or len(cid)>120 or not re.fullmatch(r"[A-Za-z0-9_-]+",cid) or ext not in ("srt","ass","ssa","vtt","zip"):continue
+  url="https://javzimu.com/api/download?"+urllib.parse.urlencode({"cid":cid,"ext":ext,"name":name})
+  if url not in found:found.append(url)
+  if len(found)>=max_items:break
+ return found
+
 def native_search(number,fetch_text,max_pages=5,source=None):
  """Search each provider's own HTML results, without Bing or fabricated matches."""
  found={};errors={};stats={}
@@ -101,6 +121,11 @@ def native_search(number,fetch_text,max_pages=5,source=None):
   url=make_url(number);pages=[];stats[site]={"search_url":url,"links_seen":0}
   try:
    raw=fetch_text(url,350000)
+   if site=="JAV字幕":
+    pages=javzimu_results(raw,number,max_pages)
+    stats[site]["links_seen"]=len(pages)
+    found[site]=pages
+    continue
    parser=SearchLinks();parser.feed(raw.decode("utf-8","replace"))
    stats[site]["links_seen"]=len(parser.links)
    for href,title in parser.links:
