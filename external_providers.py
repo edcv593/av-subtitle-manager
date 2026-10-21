@@ -111,6 +111,20 @@ def javzimu_results(raw,number,max_items=12):
   if len(found)>=max_items:break
  return found
 
+def avsubtitles_reference_pages(number,raw,max_items=12):
+ """Discover explicit AVSubtitles Japanese reference detail links from search HTML."""
+ parser=SearchLinks();parser.feed(raw.decode("utf-8","replace"))
+ results=[]
+ for href,title in parser.links:
+  url=urllib.parse.urljoin("https://www.avsubtitles.com/",html.unescape(href))
+  parsed=urllib.parse.urlsplit(url)
+  if parsed.scheme!="https" or parsed.hostname not in ("avsubtitles.com","www.avsubtitles.com"):continue
+  if not re.fullmatch(r"/movie[0-9]+/[^/?#]+/subtitles/ja/[0-9]+/?",parsed.path,re.I):continue
+  if film_code(parsed.path)!=number:continue
+  if url not in results:results.append(url)
+  if len(results)>=max_items:break
+ return results
+
 def native_search(number,fetch_text,max_pages=5,source=None):
  """Search each provider's own HTML results, without Bing or fabricated matches."""
  found={};errors={};stats={}
