@@ -1137,11 +1137,19 @@ async function show(path,tr){
     compareBox.append(el("p","先上传日语原生字幕或其他中文版本，系统按时间轴对照，仅建议有证据的改动；不会重新翻译整部影片。"));
     let compareInput=el("input");compareInput.type="file";compareInput.multiple=true;compareInput.accept=".srt,.ass,.ssa,.vtt";
     let compareUpload=el("button","添加对照字幕（最多3份）");
-    let compareStart=el("button","开始多字幕 AI 校对");
-    let compareNext=el("button","继续校对下一批");compareNext.disabled=true;
+    let compareStart=el("button","一键扫描整片并汇总建议");
+    let compareNext=el("button","暂停（当前批次结束）");compareNext.disabled=true;
+    let compareResume=el("button","继续上次校对");compareResume.disabled=true;
     let compareState=el("p","等待参考字幕");let compareResults=el("div");
-    let compareIds=[],compareOffset=0,compareSha=null,compareBusy=false;
-    compareBox.append(compareInput,compareUpload,compareStart,compareNext,compareState,compareResults);panel.append(compareBox);
+    let compareProgress=el("progress");compareProgress.max=1;compareProgress.value=0;compareProgress.style.width="100%";
+    let compareStats=el("p","尚未开始");compareStats.className="muted";
+    let compareIds=[],compareOffset=0,compareSha=null,compareBusy=false,compareStop=false,compareCount=0,compareMatched=0,compareTotal=0;
+    const compareStorage="subtitle_compare_progress:"+path;
+    const compareLoad=()=>{try{return JSON.parse(sessionStorage.getItem(compareStorage)||"null")}catch(e){return null}};
+    const compareSave=(ids)=>{sessionStorage.setItem(compareStorage,JSON.stringify({ids,offset:compareOffset,sha:compareSha,count:compareCount,matched:compareMatched,total:compareTotal}))};
+    let oldCompare=compareLoad();
+    if(oldCompare&&oldCompare.offset>0){compareResume.disabled=false;compareState.textContent="检测到上次进度："+oldCompare.offset+"/"+oldCompare.total+" 条，可继续扫描。历史建议仅保存在当前页面，刷新后需重新审核。"}
+    compareBox.append(compareInput,compareUpload,compareStart,compareNext,compareResume,compareProgress,compareStats,compareState,compareResults);panel.append(compareBox);
     compareUpload.onclick=async()=>{
      let files=Array.from(compareInput.files||[]);
      if(!files.length){compareState.textContent="请先选择参考字幕文件";return}
@@ -1158,9 +1166,11 @@ async function show(path,tr){
      }catch(e){compareState.textContent="参考字幕上传失败："+e.message}
      finally{compareUpload.disabled=false}
     };
-    const compareRun=async(restart)=>{
+    const compareRun=async(resume)=>{
      if(compareBusy)return;
-     let ids=compareIds.slice();if(referenceId&&!ids.includes(referenceId))ids.unshift(referenceId);
+     let previous=resume?compareLoad():null;
+     let ids=previous?previous.ids:compareIds.slice();
+     if(!previous&&referenceId&&!ids.includes(referenceId))ids.unshift(referenceId);
      ids=ids.slice(0,3);
      if(!ids.length){
       compareState.textContent="正在自动查找 AVSubtitles 日语参考字幕…";
@@ -1170,31 +1180,57 @@ async function show(path,tr){
        else{compareState.textContent="自动获取参考字幕失败："+(found.errors||[]).join("；").slice(0,230)+"。可以在上方上传日语或其他中文参考字幕。";return}
       }catch(e){compareState.textContent="参考字幕自动获取失败："+e.message+"；可改用上传参考字幕。";return}
      }
-     if(restart){compareOffset=0;compareSha=null;compareResults.replaceChildren();}
-     if(!confirm("将本批中文字幕及匹配的参考字幕文本发送给已配置的 AI 校对服务。不会自动保存，确认？"))return;
-     compareBusy=true;compareStart.disabled=true;compareNext.disabled=true;
-     compareState.textContent="正在对照第 "+(compareOffset+1)+" 条起的25条字幕…";
+     if(!resume&&!confirm("自动逐批校对整部中文字幕，向 AI 发送匹配的字幕文本。仅收集建议，不会自动勾选或保存。是否开始？"))return;
+     if(!resume){
+      compareOffset=0;compareSha=null;compareCount=0;compareMatched=0;compareTotal=0;
+      compareResults.replaceChildren();sessionStorage.removeItem(compareStorage);
+     }else{
+      if(!previous){compareState.textContent="没有可恢复的校对进度";return}
+      compareOffset=previous.offset;compareSha=previous.sha;compareCount=previous.count||0;
+      compareMatched=previous.matched||0;compareTotal=previous.total||0;
+     }
+     compareBusy=true;compareStop=false;compareStart.disabled=true;compareResume.disabled=true;compareNext.disabled=false;
+     let failures=0;
      try{
-      let request={path,reference_ids:ids,offset:compareOffset,original_sha256:compareSha};
-      let aligned=await api("/api/subtitles/compare/review","POST",{...request,ai:false});
-      compareState.textContent="字幕对齐成功：本批 "+aligned.rows.length+" 条中匹配 "+aligned.matched+" 条。"+(aligned.matched?" 正在请求 AI 校对…":" 当前批次没有可靠的参考内容，跳过 AI。");
-      let out=aligned.matched?await api("/api/subtitles/compare/review","POST",{...request,original_sha256:aligned.original_sha256,ai:true}):{...aligned,suggestions:[]};
-      compareSha=out.original_sha256;compareOffset=out.next_offset;
-      compareState.textContent="已检查 "+compareOffset+"/"+out.total+" 条 · 本批匹配 "+out.matched+"/"+out.rows.length+" 条 · AI 建议 "+(out.suggestions||[]).length+" 条。"+(out.done?" 已检查完成。":"可继续下一批。");
-      for(let suggestion of out.suggestions||[]){
-       let item=el("div");item.style.borderBottom="1px solid #e4e7ed";item.style.padding="8px 0";
-       let check=el("input");check.type="checkbox";
-       check.onchange=()=>{if(check.checked)replacements[suggestion.before]=suggestion.after;else delete replacements[suggestion.before];pending=null;applyBtn.disabled=true};
-       let explanation=el("p","原译："+suggestion.before+" → 建议："+suggestion.after+"\\n理由："+suggestion.reason);
-       explanation.style.whiteSpace="pre-wrap";
-       item.append(check,explanation);compareResults.append(item);
+      while(!compareStop){
+       let request={path,reference_ids:ids,offset:compareOffset,original_sha256:compareSha};
+       compareState.textContent="正在匹配第 "+(compareOffset+1)+" 条起的字幕…";
+       let aligned=await api("/api/subtitles/compare/review","POST",{...request,ai:false});
+       compareState.textContent="本批匹配 "+aligned.matched+"/"+aligned.rows.length+" 条"+(aligned.matched?"，正在请求 AI…":"，无需 AI 请求");
+       let out;
+       try{
+        out=aligned.matched?await api("/api/subtitles/compare/review","POST",{...request,original_sha256:aligned.original_sha256,ai:true}):{...aligned,suggestions:[]};
+        failures=0;
+       }catch(e){
+        failures++;
+        compareState.textContent="AI 校对失败："+e.message+"。当前进度已保留，可点击继续重试。";
+        break;
+       }
+       compareSha=out.original_sha256;compareOffset=out.next_offset;compareTotal=out.total;
+       compareMatched+=out.matched;compareCount+=(out.suggestions||[]).length;
+       compareProgress.max=Math.max(1,compareTotal);compareProgress.value=compareOffset;
+       compareStats.textContent="进度 "+compareOffset+"/"+compareTotal+" · 匹配 "+compareMatched+" 条 · 建议 "+compareCount+" 条";
+       for(let suggestion of out.suggestions||[]){
+        let item=el("div");item.style.borderBottom="1px solid #e4e7ed";item.style.padding="8px 0";
+        let check=el("input");check.type="checkbox";
+        check.onchange=()=>{if(check.checked)replacements[suggestion.before]=suggestion.after;else delete replacements[suggestion.before];pending=null;applyBtn.disabled=true};
+        let explanation=el("p","原译："+suggestion.before+" → 建议："+suggestion.after+"\\n理由："+suggestion.reason);
+        explanation.style.whiteSpace="pre-wrap";item.append(check,explanation);compareResults.append(item);
+       }
+       compareSave(ids);
+       if(out.done){sessionStorage.removeItem(compareStorage);compareState.textContent="整片校对完成！共 "+compareTotal+" 条，匹配 "+compareMatched+" 条，得到 "+compareCount+" 条建议。请逐条勾选并预览保存。";break}
+       if(out.next_offset<=request.offset)throw Error("校对进度没有前进，已停止以避免无限循环");
       }
-      compareNext.disabled=out.done;
-     }catch(e){compareState.textContent="智能校对失败："+e.message}
-     finally{compareBusy=false;compareStart.disabled=false}
+      if(compareStop)compareState.textContent="已暂停，当前已处理 "+compareOffset+"/"+compareTotal+" 条；可继续上次校对。";
+     }catch(e){compareState.textContent="智能校对中断："+e.message+"；已完成的进度保留，可重试。"}
+     finally{
+      compareBusy=false;compareStart.disabled=false;compareNext.disabled=true;
+      compareResume.disabled=!compareLoad();
+     }
     };
-    compareStart.onclick=()=>compareRun(true);
-    compareNext.onclick=()=>compareRun(false);
+    compareStart.onclick=()=>compareRun(false);
+    compareNext.onclick=()=>{compareStop=true;compareNext.disabled=true;compareState.textContent="暂停请求已收到，等待当前批次完成…"};
+    compareResume.onclick=()=>compareRun(true);
     let autoBtn=el("button","一键获取日语参考并整片 AI 校对");
     let autoStatus=el("p","自动流程不会覆盖原字幕；AI 建议需人工勾选并预览保存。");
     panel.append(autoBtn,autoStatus);
