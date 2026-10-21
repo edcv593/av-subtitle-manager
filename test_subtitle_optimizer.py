@@ -53,6 +53,16 @@ class ReferenceSubtitleTests(unittest.TestCase):
   self.assertTrue(done)
   self.assertEqual(first+second,raw.decode())
   self.assertEqual(last,len(raw.decode()))
+ def test_ai_suggestions_rejects_ambiguous_duplicate_line(self):
+  import json
+  raw=("1\n00:00:01,000 --> 00:00:02,000\n重复台词\n\n2\n00:00:03,000 --> 00:00:04,000\n重复台词\n").encode()
+  response={"choices":[{"message":{"content":json.dumps({"suggestions":[{"before":"重复台词","after":"新台词"}]})}}]}
+  class FakeResponse:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self,n):return json.dumps(response).encode()
+  with patch.object(opt.urllib.request,"urlopen",return_value=FakeResponse()):
+   self.assertEqual(opt.ai_suggestions(raw,"srt","test-key"),[])
  def test_ai_batch_rejects_midline_offset(self):
   with self.assertRaises(ValueError):opt.ai_batch(SRT,2)
  def test_second_batch_reference_uses_later_cues(self):
