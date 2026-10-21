@@ -1175,7 +1175,10 @@ async function show(path,tr){
      compareBusy=true;compareStart.disabled=true;compareNext.disabled=true;
      compareState.textContent="正在对照第 "+(compareOffset+1)+" 条起的25条字幕…";
      try{
-      let out=await api("/api/subtitles/compare/review","POST",{path,reference_ids:ids,offset:compareOffset,original_sha256:compareSha,ai:true});
+      let request={path,reference_ids:ids,offset:compareOffset,original_sha256:compareSha};
+      let aligned=await api("/api/subtitles/compare/review","POST",{...request,ai:false});
+      compareState.textContent="字幕对齐成功：本批 "+aligned.rows.length+" 条中匹配 "+aligned.matched+" 条。"+(aligned.matched?" 正在请求 AI 校对…":" 当前批次没有可靠的参考内容，跳过 AI。");
+      let out=aligned.matched?await api("/api/subtitles/compare/review","POST",{...request,original_sha256:aligned.original_sha256,ai:true}):{...aligned,suggestions:[]};
       compareSha=out.original_sha256;compareOffset=out.next_offset;
       compareState.textContent="已检查 "+compareOffset+"/"+out.total+" 条 · 本批匹配 "+out.matched+"/"+out.rows.length+" 条 · AI 建议 "+(out.suggestions||[]).length+" 条。"+(out.done?" 已检查完成。":"可继续下一批。");
       for(let suggestion of out.suggestions||[]){
