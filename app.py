@@ -703,6 +703,7 @@ async function show(path,tr){
     punct.onchange=()=>{pending=null;applyBtn.disabled=true};
     sceneBtn.onclick=()=>{result.replaceChildren(el("p","远程 NAS 不读取视频或音频，无法自动核对场景。建议对照播放器中的对白与字幕；仅凭文本分析不能确认译文准确。"))};
     aiBtn.onclick=async()=>{
+     if(!confirm("AI 润色将向外部 API 发送最多 12000 字符的字幕文本片段。确认继续？"))return;
      aiBtn.disabled=true;result.replaceChildren(el("p","正在请求 AI 文本建议（不会自动保存）…"));
      try{
       let out=await api("/api/subtitles/optimize/ai","POST",{path});
