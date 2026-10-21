@@ -26,7 +26,7 @@ jobs:
           python-version: '3.12'
       - name: Validate timeline checks
         run: |
-          python -m compileall -q app.py timeline.py reliability.py ai_queue.py subtitle_files.py subtitle_quality.py external_providers.py subtitle_optimizer.py
+          python -m compileall -q app.py timeline.py reliability.py ai_queue.py subtitle_files.py subtitle_quality.py external_providers.py subtitle_optimizer.py ai_provider_settings.py
           python -m unittest -v test_timeline.py test_reliability.py test_ai_queue.py test_web_html.py test_remote_mount.py test_subtitle_files.py test_subtitle_quality.py test_candidate_upload.py test_external_providers.py test_subtitle_optimizer.py
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
