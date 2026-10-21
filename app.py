@@ -537,7 +537,7 @@ async def optimize_ai(request:Request):
     if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
     ref_path=DATA/"reference_subtitles"/reference_id
     if not ref_path.is_file() or ref_path.stat().st_size>LIMIT:raise ValueError("参考字幕不存在或过大")
-    reference=subtitle_optimizer.reference_for_window(target.read_bytes(),target.suffix.lower().lstrip("."),ref_path.read_bytes(),ref_path.suffix.lstrip("."))
+    reference=subtitle_optimizer.reference_for_window(target.read_bytes(),target.suffix.lower().lstrip("."),ref_path.read_bytes(),ref_path.suffix.lstrip("."),offset=offset)
    suggestions=await asyncio.to_thread(subtitle_optimizer.ai_suggestions,target.read_bytes(),target.suffix.lower().lstrip("."),key,model,endpoint,reference,offset)
    return {"suggestions":suggestions,"next_offset":next_offset,"done":done,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
   except Exception as exc:raise HTTPException(502,"AI 建议失败："+str(exc)[:160])
