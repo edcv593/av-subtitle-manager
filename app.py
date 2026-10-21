@@ -11,6 +11,7 @@ import subtitle_quality
 import external_providers
 import subtitle_optimizer
 import subtitle_google
+import workflow_plan
 import ai_provider_settings
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
@@ -300,6 +301,17 @@ def videos(request:Request,q:str="",status:str=""):
   if q:sql+=" AND (path LIKE ? OR code LIKE ?)";args.extend(["%"+q+"%","%"+q+"%"])
   sql+=" ORDER BY updated DESC LIMIT 500"
   return {"items":[dict(r) for r in c.execute(sql,args)]}
+@app.post("/api/workflow/plan")
+async def workflow_plan_api(request:Request):
+ """Determine the safest next subtitle action without reading video media."""
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  row=c.execute("SELECT status FROM videos WHERE path=?",(str(p),)).fetchone()
+  items=[q.name for q in subtitle_files.subtitles_for(p)]
+  candidate_count=c.execute("SELECT COUNT(*) FROM candidates WHERE path=?",(str(p),)).fetchone()[0]
+  return workflow_plan.plan(p,items,code(p.name),row["status"],candidate_count)
+
 @app.post("/api/scan")
 def scan_now(request:Request):
  auth(request)
