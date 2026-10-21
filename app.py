@@ -1,5 +1,6 @@
 import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.parse,urllib.error,ipaddress,socket,hashlib,zipfile,io,asyncio
 from pathlib import Path
+from contextlib import closing
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
 import timeline
@@ -323,7 +324,7 @@ def review_auto_reference(p):
       folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
       target=folder/(digest+"."+ext)
       if not target.exists():target.write_bytes(data)
-      with db() as c:
+      with closing(db()) as c:
        c.execute("INSERT OR REPLACE INTO video_references VALUES(?,?,?)",(str(p),target.name,time.time()));c.commit()
       return target.name
      except Exception:continue
@@ -334,11 +335,13 @@ def review_auto_reference(p):
 def review_worker_one(job):
  job_id=job["id"]
  try:
-  with db() as c:
+  with closing(db()) as c:
    p=video(c,job["video_path"])
    if SKIP_C and marked(p.name):raise ValueError("-C 影片不允许修改")
    files=subtitle_files.subtitles_for(p)
-   if len(files)!=1:raise ValueError("需要恰好一份外挂中文字幕，当前请人工审核")
+   if len(files)!=1:
+    review_queue.finish(c,job_id,"reviewing","需要恰好一份外挂中文字幕；请先在影片审核中选择主字幕")
+    return
    target=files[0];ext=target.suffix.lower().lstrip(".")
    if target.stat().st_size>LIMIT:raise ValueError("字幕文件过大")
    raw=target.read_bytes()
@@ -353,7 +356,7 @@ def review_worker_one(job):
     reference_id=refrow["reference_id"] if refrow else ""
   if not reference_id:reference_id=review_auto_reference(p)
   if not reference_id:
-   with db() as c:review_queue.finish(c,job_id,"reviewing","未找到可验证的日语参考字幕；请上传参考字幕后重试")
+   with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","未找到可验证的日语参考字幕；请上传参考字幕后重试")
    return
   if not re.fullmatch(r"[0-9a-f]{64}\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
   source=DATA/"reference_subtitles"/reference_id
@@ -368,7 +371,7 @@ def review_worker_one(job):
   if not key:raise ValueError("请先在 AI 设置中配置 API Key")
   allowed=timeline.decode(raw).splitlines()
   while offset<len(main_entries):
-   with db() as c:
+   with closing(db()) as c:
     current=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
     if not current or current["status"]!="running":return
    batch=subtitle_compare.review_batch(raw,ext,refs,offset=offset,max_cues=25)
@@ -377,11 +380,11 @@ def review_worker_one(job):
    suggestions.extend(new);matched+=hits
    previous=offset;offset=batch["next_offset"]
    if offset<=previous:raise ValueError("校对进度未前进")
-   with db() as c:
+   with closing(db()) as c:
     if not review_queue.checkpoint(c,job_id,original_sha,offset,batch["total"],matched,suggestions):return
    time.sleep(0.3)
   if not job["auto_apply"]:
-   with db() as c:review_queue.finish(c,job_id,"reviewing","校对完成，等待人工审核建议")
+   with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","校对完成，等待人工审核建议")
    return
   edits={};conflicts=set()
   for item in suggestions:
@@ -393,9 +396,9 @@ def review_worker_one(job):
   for before in conflicts:edits.pop(before,None)
   if len(edits)>200:raise ValueError("建议超过 200 条安全上限，请人工审核")
   if not edits:
-   with db() as c:review_queue.finish(c,job_id,"completed","没有可安全应用的建议")
+   with closing(db()) as c:review_queue.finish(c,job_id,"completed","没有可安全应用的建议")
    return
-  with db() as c:
+  with closing(db()) as c:
    row=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
    if not row or row["status"]!="running":return
    latest=subtitle_files.subtitles_for(p)
@@ -413,12 +416,12 @@ def review_worker_one(job):
    review_queue.finish(c,job_id,"completed","",backup.name,len(changes))
  except Exception as exc:
   log.exception("NAS review job %s failed",job_id)
-  with db() as c:review_queue.finish(c,job_id,"failed",str(exc)[:450])
+  with closing(db()) as c:review_queue.finish(c,job_id,"failed",str(exc)[:450])
 
 def review_worker_loop():
  while True:
   try:
-   with db() as c:job=review_queue.claim(c)
+   with closing(db()) as c:job=review_queue.claim(c)
    if job:review_worker_one(job)
    else:time.sleep(2)
   except Exception:
@@ -428,14 +431,14 @@ def review_worker_loop():
 @app.get("/api/review/jobs")
 def get_review_jobs(request:Request,status:str=""):
  auth(request)
- with db() as c:
+ with closing(db()) as c:
   try:return {"items":review_queue.list_jobs(c,status)}
   except ValueError as exc:raise HTTPException(400,str(exc))
 
 @app.get("/api/review/jobs/{job_id}")
 def get_review_job(request:Request,job_id:int):
  auth(request)
- with db() as c:
+ with closing(db()) as c:
   row=c.execute("SELECT * FROM review_jobs WHERE id=?",(job_id,)).fetchone()
   if not row:raise HTTPException(404,"任务不存在")
   result=review_queue.summarize(row)
@@ -459,7 +462,7 @@ async def enqueue_review_jobs(request:Request):
  auto_apply=body.get("auto_apply",False)
  if not isinstance(auto_apply,bool):raise HTTPException(400,"auto_apply 必须为布尔值")
  items=[]
- with db() as c:
+ with closing(db()) as c:
   for path in dict.fromkeys(paths):
    p=video(c,str(path))
    if SKIP_C and marked(p.name):continue
@@ -470,7 +473,7 @@ async def enqueue_review_jobs(request:Request):
 @app.post("/api/review/jobs/{job_id}/action")
 async def review_job_action(request:Request,job_id:int):
  auth(request);body=await request.json()
- with db() as c:
+ with closing(db()) as c:
   try:return {"job":review_queue.action(c,job_id,str(body.get("action","")))}
   except ValueError as exc:raise HTTPException(409,str(exc))
 
@@ -1273,6 +1276,7 @@ async function runWorkflow(path,tr,button){
  finally{button.disabled=false;button.textContent="一键处理"}
 }
 async function reviewQueue(){
+ if(window.reviewQueueTimer){clearInterval(window.reviewQueueTimer);window.reviewQueueTimer=null}
  const panel=document.getElementById("reviewQueuePanel");
  panel.replaceChildren(el("p","正在读取 NAS 后台任务…"));
  try{
@@ -1346,6 +1350,7 @@ async function reviewQueue(){
   refresh.onclick=refreshJobs;
   panel.append(help,autoLabel,start,refresh,progress,table);
   await refreshJobs();
+  window.reviewQueueTimer=setInterval(()=>{if(panel.isConnected&&!document.hidden)refreshJobs();else if(!panel.isConnected){clearInterval(window.reviewQueueTimer);window.reviewQueueTimer=null}},8000);
  }catch(e){panel.replaceChildren(el("p","NAS 队列加载失败："+e.message))}
 }
 async function show(path,tr){
