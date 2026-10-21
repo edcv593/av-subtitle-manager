@@ -56,6 +56,32 @@ class CompareTests(unittest.TestCase):
   with patch.object(sc.urllib.request,"urlopen",return_value=Response()):
    with self.assertRaisesRegex(ValueError,"非 JSON"):
     sc.ai_review(rows,"key","deepseek-chat","https://api.deepseek.com/chat/completions",MAIN.decode().splitlines())
+ def test_length_truncation_retries_smaller_groups(self):
+  rows=sc.review_batch(MAIN,"srt",[("ja",JA,"srt",0),("zh-alt",ZH,"srt",0)])["rows"]
+  rows=[rows[0],dict(rows[0],index=9,chinese="其他台词")]
+  calls=[]
+  class Response:
+   def __init__(self,value):self.value=value
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self,n):return json.dumps(self.value).encode()
+  def fake_open(req,timeout):
+   data=json.loads(req.data);calls.append(data)
+   if len(calls)==1:return Response({"choices":[{"finish_reason":"length","message":{"content":""}}]})
+   return Response({"choices":[{"finish_reason":"stop","message":{"content":'{"suggestions":[]}'}}]})
+  with patch.object(sc.urllib.request,"urlopen",side_effect=fake_open):
+   self.assertEqual(sc.ai_review(rows,"key","deepseek-chat","https://api.deepseek.com/chat/completions",MAIN.decode().splitlines()),[])
+  self.assertEqual(len(calls),3)
+  self.assertEqual(calls[0]["max_tokens"],3500)
+ def test_single_cue_length_error_explained(self):
+  rows=sc.review_batch(MAIN,"srt",[("ja",JA,"srt",0)])["rows"]
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self,n):return b'{"choices":[{"finish_reason":"length","message":{"content":""}}]}'
+  with patch.object(sc.urllib.request,"urlopen",return_value=Response()):
+   with self.assertRaisesRegex(ValueError,"单条校对仍超出输出长度"):
+    sc.ai_review(rows,"key","deepseek-chat","https://api.deepseek.com/chat/completions",MAIN.decode().splitlines())
  def test_reject_duplicate_text_changes(self):
   rows=sc.review_batch(MAIN,"srt",[("ja",JA,"srt",0)])["rows"]
   response={"choices":[{"message":{"content":json.dumps({"suggestions":[{"index":0,"before":"你为什么那么做？","after":"你怎么这样？","reason":"测试"}]},ensure_ascii=False)}}]}
