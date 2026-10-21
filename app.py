@@ -1273,52 +1273,80 @@ async function runWorkflow(path,tr,button){
  finally{button.disabled=false;button.textContent="一键处理"}
 }
 async function reviewQueue(){
- let panel=document.getElementById("reviewQueuePanel");
- panel.replaceChildren(el("p","正在读取待审核影片…"));
+ const panel=document.getElementById("reviewQueuePanel");
+ panel.replaceChildren(el("p","正在读取 NAS 后台任务…"));
  try{
-  let data=await api("/api/videos?"+new URLSearchParams({status:"review"}));
-  let items=data.items||[];
-  panel.replaceChildren(el("h3","待审核列表 · "+items.length+" 部"));
-  if(!items.length){panel.append(el("p","目前没有待审核影片"));return}
-  let note=el("p","批量检索会逐部检查现有候选和外部字幕来源，不会直接覆盖已有字幕。");
-  let start=el("button","一键批量检索待审核");
-  let stop=el("button","暂停批量检索");stop.disabled=true;
-  let progress=el("p","尚未开始");
-  let entries=el("div");
-  let halted=false,busy=false;
-  stop.onclick=()=>{halted=true;stop.disabled=true;progress.textContent+=" · 已请求暂停"};
-  for(let x of items){
-   let line=el("div");line.style.padding="7px";line.style.borderBottom="1px solid #e4e7ed";
-   let open=el("button","打开审核");open.onclick=()=>{
-    let filter=document.getElementById("status");filter.value="review";
-    load().then(()=>{let row=Array.from(document.getElementById("rows").rows).find(r=>r.cells[0]&&r.cells[0].title.split("\\n")[0]===x.path);if(row)show(x.path,row)});
-   };
-   let info=el("span",x.path.split("/").pop()+" · "+(x.detail||"待审核").slice(0,100)+" ");
-   let state=el("span","待处理");
-   line.append(info,open,state);entries.append(line);
-   x._queueState=state;
+  const [videos,jobs]=await Promise.all([
+   api("/api/videos?"+new URLSearchParams({status:"review"})),
+   api("/api/review/jobs")
+  ]);
+  const items=videos.items||[];
+  panel.replaceChildren(el("h3","NAS 后台校对队列 · 待审核影片 "+items.length+" 部"));
+  const help=el("p","任务在 NAS 后台执行，关闭网页后继续；进度和建议保存在 /data/subtitle.db。自动检索日语参考字幕，逐批校对现有中文；不读取视频音频。");
+  const auto=el("input");auto.type="checkbox";auto.checked=false;
+  const autoLabel=el("label");autoLabel.append(auto,document.createTextNode(" 校对完成后自动应用无冲突建议并备份（可选）"));
+  const start=el("button","将全部待审核影片加入 NAS 队列");start.className="primary";
+  const refresh=el("button","刷新任务状态");
+  const progress=el("p","后台任务可在关闭网页后继续运行。");
+  const table=el("table");const head=el("thead");head.innerHTML="<tr><th>影片</th><th>状态与进度</th><th>操作</th></tr>";
+  const body=el("tbody");table.append(head,body);
+  const statusName={pending:"等待处理",running:"后台校对中",paused:"已暂停",reviewing:"等待人工审核",completed:"已完成",failed:"失败",cancelled:"已取消"};
+  async function refreshJobs(){
+   if(!document.getElementById("reviewQueuePanel")||!panel.isConnected)return;
+   try{
+    const data=await api("/api/review/jobs");
+    body.replaceChildren();
+    for(const j of data.items||[]){
+     const tr=el("tr");const name=el("td",j.video_path.split("/").pop());
+     name.title=j.video_path;
+     const state=el("td",(statusName[j.status]||j.status)+" · "+j.offset+"/"+(j.total||"?")+" 条 · 匹配 "+j.matched+" · 建议 "+j.suggestion_count+(j.changed?" · 已修改 "+j.changed:"")+(j.backup?" · 已备份":"")+(j.error?" · "+j.error:""));
+     const actions=el("td");
+     const allowed=j.status==="running"||j.status==="pending"?["pause","cancel"]:j.status==="paused"?["resume","cancel"]:j.status==="failed"||j.status==="reviewing"||j.status==="cancelled"?["retry"]:[];
+     for(const action of allowed){
+      const button=el("button",({pause:"暂停",cancel:"取消",resume:"继续",retry:"重新处理"})[action]);
+      button.onclick=async()=>{button.disabled=true;try{await api("/api/review/jobs/"+j.id+"/action","POST",{action});await refreshJobs()}catch(e){progress.textContent="任务操作失败："+e.message;button.disabled=false}};
+      actions.append(button);
+     }
+     if(j.suggestion_count){
+      const detail=el("button","查看建议");
+      detail.onclick=async()=>{
+       try{
+        const full=await api("/api/review/jobs/"+j.id);
+        const area=el("div");area.style.whiteSpace="pre-wrap";
+        for(const item of full.suggestions||[])area.append(el("p","原译："+item.before+"\\n建议："+item.after+"\\n依据："+item.reason));
+        if(!full.suggestions.length)area.append(el("p","暂无建议"));
+        tr.after(el("tr"));const row=tr.nextSibling;const cell=el("td");cell.colSpan=3;cell.append(area);row.append(cell);
+        detail.disabled=true;
+       }catch(e){progress.textContent="读取建议失败："+e.message}
+      };
+      actions.append(detail);
+     }
+     const open=el("button","打开影片");open.onclick=async()=>{
+      document.getElementById("status").value="";
+      await load();
+      const row=Array.from(document.getElementById("rows").rows).find(x=>x.cells[0]&&x.cells[0].title.split("\\n")[0]===j.video_path);
+      if(row)show(j.video_path,row);
+     };actions.append(open);
+     tr.append(name,state,actions);body.append(tr);
+    }
+    progress.textContent="NAS 后台任务 "+(data.items||[]).length+" 个 · "+new Date().toLocaleTimeString()+" 更新";
+   }catch(e){progress.textContent="队列刷新失败："+e.message}
   }
   start.onclick=async()=>{
-   if(busy)return;
-   if(!confirm("将逐部检索 "+items.length+" 部待审核影片的字幕候选，可能需要较长时间；不会自动替换字幕。继续？"))return;
-   busy=true;halted=false;start.disabled=true;stop.disabled=false;
-   let success=0,failed=0;
+   if(!items.length){progress.textContent="没有待审核影片";return}
+   if(!confirm("把 "+items.length+" 部影片加入 NAS 后台队列。"+(auto.checked?"会自动备份并保存通过校验的字幕修改。":"只收集建议，不自动替换。")+" 是否继续？"))return;
+   start.disabled=true;
    try{
-    for(let i=0;i<items.length&&!halted;i++){
-     let x=items[i];progress.textContent="正在处理 "+(i+1)+"/"+items.length+" · 成功 "+success+" · 失败 "+failed;
-     x._queueState.textContent=" · 检索中…";
-     try{
-      let result=await api("/api/candidates/discover","POST",{path:x.path});
-      let count=(result.items||[]).length;
-      x._queueState.textContent=" · 检索完成，新增候选 "+count+" 份"+(Object.values(result.errors||{}).length?"（部分来源异常）":"");
-      success++;
-     }catch(e){x._queueState.textContent=" · 失败："+e.message;failed++}
-    }
-    progress.textContent="批量检索"+(halted?"已暂停":"完成")+" · 成功 "+success+" · 失败 "+failed+"。可逐部打开审核并应用候选。";
-   }finally{busy=false;start.disabled=false;stop.disabled=true}
+    const result=await api("/api/review/jobs","POST",{paths:items.map(x=>x.path),auto_apply:auto.checked});
+    progress.textContent="已添加 "+result.created+" 个后台任务；现在可以关闭页面。";
+    await refreshJobs();
+   }catch(e){progress.textContent="入队失败："+e.message}
+   finally{start.disabled=false}
   };
-  panel.append(note,start,stop,progress,entries);
- }catch(e){panel.replaceChildren(el("p","待审核列表加载失败："+e.message))}
+  refresh.onclick=refreshJobs;
+  panel.append(help,autoLabel,start,refresh,progress,table);
+  await refreshJobs();
+ }catch(e){panel.replaceChildren(el("p","NAS 队列加载失败："+e.message))}
 }
 async function show(path,tr){
  let prev=document.getElementById("activeCandidateRow");
