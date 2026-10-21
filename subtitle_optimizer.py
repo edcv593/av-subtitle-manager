@@ -154,10 +154,11 @@ def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.ope
  suggestions=body.get("suggestions",[])
  if not isinstance(suggestions,list):raise ValueError("AI 响应格式错误")
  valid_lines=set(sample.splitlines())
+ full_lines=raw.decode("utf-8-sig","replace").splitlines()
  result=[]
  for item in suggestions[:10]:
   if not isinstance(item,dict):continue
   before=item.get("before");after=item.get("after")
-  if isinstance(before,str) and before in valid_lines and isinstance(after,str) and 0<len(after)<1500 and "\n" not in after and "\r" not in after and before!=after and "-->" not in before:
+  if isinstance(before,str) and before in valid_lines and full_lines.count(before)==1 and isinstance(after,str) and 0<len(after)<1500 and "\n" not in after and "\r" not in after and before!=after and "-->" not in before:
    result.append({"before":before,"after":after})
  return result
