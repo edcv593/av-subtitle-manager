@@ -174,3 +174,7 @@ SCAN_HOURS: "12"
 ### 网页配置 DeepSeek / OpenAI API
 
 连接 WEB_TOKEN 后，网页顶部「AI 接口设置」可选择 DeepSeek 或 OpenAI、填写模型及 API Key，保存后点击「测试连接」。DeepSeek 默认模型为 `deepseek-flash`，接口固定 `https://api.deepseek.com/chat/completions`；OpenAI 默认模型为 `gpt-4o-mini`。不接受任意自定义 URL，以防 SSRF。配置保存至挂载的 `/data/ai_provider.json`，仅服务端读取；文件权限设置为 0600，网页仅显示是否配置，不返回 API Key。**密钥在 NAS 磁盘中以明文保存**，请保护 /data 目录和 WEB_TOKEN，避免备份公开。点击「清除密钥」可以删除保存的 Key。无需再设置 `SUBTITLE_AI_API_KEY`，网页设置优先用于字幕润色。
+
+
+### AI 对照原语言参考字幕（实验性）
+在「字幕审核」→「字幕优化」区域，可选上传原语言 SRT/VTT/ASS/SSA 字幕（例如从 AVSubtitles 手工取得的日语字幕），再点击「可选 AI 润色建议」。参考字幕仅暂存到 `/data/reference_subtitles`，不会替换已有中文字幕。调用已配置的 DeepSeek/OpenAI 时，最多发送 12000 字符中文字幕和 6000 字符参考字幕，需在网页确认。模型仅提供最多 10 条待审核修改建议，无法保证两份字幕的时间轴完全对应；选择建议后仍须预览差异、人工确认保存和自动备份。远程 NAS 不读取视频或音频。请仅上传有权使用的参考字幕。
