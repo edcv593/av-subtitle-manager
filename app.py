@@ -390,18 +390,7 @@ def review_worker_one(job):
   with closing(db()) as c:
    p=video(c,job["video_path"])
    if SKIP_C and marked(p.name):raise ValueError("-C 影片不允许修改")
-   target,reason=subtitle_files.choose_chinese(p)
-   if target is None:
-    review_queue.finish(c,job_id,"reviewing",reason+"；请先在影片审核中选择主字幕")
-    return
-   ext=target.suffix.lower().lstrip(".")
-   if target.stat().st_size>LIMIT:raise ValueError("字幕文件过大")
-   raw=target.read_bytes()
-   original_sha=subtitle_optimizer.digest(raw)
-   if job["original_sha256"] and job["original_sha256"]!=original_sha:raise ValueError("主字幕已变化，请重新创建校对任务")
-   main_entries=subtitle_compare.entries(raw,ext)
-   if sum(bool(subtitle_compare.HAN.search(x["text"])) for x in main_entries)<max(1,len(main_entries)//3):
-    raise ValueError("主字幕不符合中文校对条件")
+   # Stage 1: obtain the Japanese reference before choosing any Chinese base.
    reference_id=job["reference_id"]
    if not reference_id:
     refrow=c.execute("SELECT reference_id FROM video_references WHERE video_path=?",(str(p),)).fetchone()
@@ -417,7 +406,21 @@ def review_worker_one(job):
   if not source.is_file() or source.stat().st_size>LIMIT:raise ValueError("参考字幕缺失或过大")
   reference_raw=source.read_bytes()
   if hashlib.sha256(reference_raw).hexdigest()!=reference_id.split(".")[0]:raise ValueError("参考字幕哈希校验失败")
-  refs=[(reference_id,reference_raw,source.suffix.lower().lstrip("."),0)]
+  reference_ext=source.suffix.lower().lstrip(".")
+  if not any(subtitle_compare.JAPANESE.search(x["text"]) for x in subtitle_compare.entries(reference_raw,reference_ext)):
+   raise ValueError("参考字幕不包含日语假名，拒绝作为日语原文依据")
+  # Stage 2: compare local and downloaded Chinese subtitle versions.
+  with closing(db()) as c:review_queue.set_phase(c,job_id,"日文字幕已获取，正在下载并比较最佳中文字幕")
+  base=review_best_chinese(p,reference_raw,reference_ext,job_id)
+  if base is None:
+   with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","未找到与日语时间轴可靠匹配的中文字幕")
+   return
+  raw=base["data"];ext=base["ext"]
+  original_sha=subtitle_optimizer.digest(raw)
+  if job["original_sha256"] and job["original_sha256"]!=original_sha:raise ValueError("中文基础字幕已变化，请重新创建任务")
+  main_entries=subtitle_compare.entries(raw,ext)
+  originals={q:hashlib.sha256(q.read_bytes()).hexdigest() for q in subtitle_files.subtitles_for(p)}
+  refs=[(reference_id,reference_raw,reference_ext,0)]
   offset=job["offset"];matched=job["matched"]
   suggestions=json.loads(job["suggestions"])
   if not isinstance(suggestions,list):raise ValueError("校对进度文件异常")
@@ -453,24 +456,19 @@ def review_worker_one(job):
   for before in conflicts:edits.pop(before,None)
   if len(edits)>200:raise ValueError("建议超过 200 条安全上限，请人工审核")
   if not edits:
-   with closing(db()) as c:review_queue.finish(c,job_id,"completed","没有可安全应用的建议")
-   return
+   log.info("Review job %s: no safe changes, publishing best Chinese base",job_id)
   with closing(db()) as c:
    row=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
    if not row or row["status"]!="running":return
-   latest,reason=subtitle_files.choose_chinese(p)
-   if latest!=target or subtitle_optimizer.digest(target.read_bytes())!=original_sha:
-    raise ValueError("主字幕已发生变化，已停止自动替换")
+   if {str(q):hashlib.sha256(q.read_bytes()).hexdigest() for q in subtitle_files.subtitles_for(p)}!={str(q):v for q,v in originals.items()}:
+    raise ValueError("字幕文件在校对期间发生变化，停止自动发布")
    optimized,changes=subtitle_optimizer.optimize(raw,ext,True,True,edits)
    if timeline.cues(raw,ext)!=timeline.cues(optimized,ext):raise ValueError("时间轴发生变化，拒绝保存")
    if not valid(optimized,ext) or subtitle_quality.evaluate(optimized,ext)["level"]=="blocked":
     raise ValueError("优化后字幕质量校验失败")
-   if not changes:
-    review_queue.finish(c,job_id,"completed","没有需要保存的变化")
-    return
-   saved,backup=subtitle_files.replace_selected(p,target,optimized,ext)
-   reset_retry(c,p);record(c,p,code(p.name),"existing","NAS review optimized | backup="+backup.name)
-   review_queue.finish(c,job_id,"completed","",backup.name,len(changes))
+   saved,archive,archived=subtitle_delivery.publish(p,optimized,ext,DATA/"subtitle_archives",originals)
+   reset_retry(c,p);record(c,p,code(p.name),"existing","NAS optimized subtitle | source="+base["source"]+" | archive="+str(archive))
+   review_queue.finish(c,job_id,"completed","",str(archive),len(changes))
  except Exception as exc:
   log.exception("NAS review job %s failed",job_id)
   with closing(db()) as c:review_queue.finish(c,job_id,"failed",str(exc)[:450])
