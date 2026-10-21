@@ -24,9 +24,9 @@ class SubtitleFileTests(unittest.TestCase):
   with self.assertRaises(ValueError):replace(self.video,b"new","srt")
   self.assertEqual(self.old.read_bytes(),b"old subtitle")
  def test_choose_chinese_with_japanese_sidecar(self):
-  self.old.write_text("1\\n00:00:01,000 --> 00:00:03,000\\n这是中文字幕\\n",encoding="utf-8")
+  self.old.write_text("1\n00:00:01,000 --> 00:00:03,000\n这是中文字幕\n",encoding="utf-8")
   ja=self.video.parent/"IPX-123.ja.srt"
-  ja.write_text("1\\n00:00:01,000 --> 00:00:03,000\\nこれは日本語です\\n",encoding="utf-8")
+  ja.write_text("1\n00:00:01,000 --> 00:00:03,000\nこれは日本語です\n",encoding="utf-8")
   chosen,reason=choose_chinese(self.video)
   self.assertEqual(chosen,self.old)
   self.assertEqual(reason,"")
@@ -35,14 +35,14 @@ class SubtitleFileTests(unittest.TestCase):
   self.assertIn("中文字幕",backup.read_text(encoding="utf-8"))
   self.assertIn("日本語",ja.read_text(encoding="utf-8"))
  def test_ambiguous_chinese_versions_need_review(self):
-  self.old.write_text("1\\n00:00:01,000 --> 00:00:03,000\\n这是中文字幕\\n",encoding="utf-8")
+  self.old.write_text("1\n00:00:01,000 --> 00:00:03,000\n这是中文字幕\n",encoding="utf-8")
   other=self.video.parent/"IPX-123.chs.srt"
-  other.write_text("1\\n00:00:01,000 --> 00:00:03,000\\n另一个中文字幕\\n",encoding="utf-8")
+  other.write_text("1\n00:00:01,000 --> 00:00:03,000\n另一个中文字幕\n",encoding="utf-8")
   self.assertEqual(choose_chinese(self.video)[0],None)
  def test_multiple_chinese_with_unique_zh_label(self):
-  self.old.write_text("1\\n00:00:01,000 --> 00:00:03,000\\n这是中文字幕\\n",encoding="utf-8")
+  self.old.write_text("1\n00:00:01,000 --> 00:00:03,000\n这是中文字幕\n",encoding="utf-8")
   other=self.video.parent/"IPX-123.other.srt"
-  other.write_text("1\\n00:00:01,000 --> 00:00:03,000\\n另一个中文字幕\\n",encoding="utf-8")
+  other.write_text("1\n00:00:01,000 --> 00:00:03,000\n另一个中文字幕\n",encoding="utf-8")
   self.assertEqual(choose_chinese(self.video)[0],self.old)
  def test_no_valid_chinese_needs_review(self):
   self.assertIsNone(choose_chinese(self.video)[0])
