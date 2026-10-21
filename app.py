@@ -296,35 +296,40 @@ async def discover_external(request:Request):
   p=video(c,str(body.get("path","")));number=code(p.name)
   if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
   pages,errors=external_providers.indexed_pages(number,fetch)
-  imported=[];seen=set()
+  imported=[];seen=set();stats={k:{"pages":len(v),"download_links":0,"downloaded":0,"accepted":0,"rejected":0} for k,v in pages.items()}
   for source,urls in pages.items():
    for page_url in urls[:3]:
     try:
      page=fetch(page_url,250000)
      links=external_providers.detail_downloads(source,page_url,page)
-     if not links:errors[source]="未发现可验证的中文字幕下载链接"
+     stats[source]["download_links"]+=len(links)
+     if not links:errors[source]="详情页没有可解析的中文字幕下载链接"
      for link in links[:3]:
       if link in seen:continue
       seen.add(link)
       try:
        raw=fetch(link,LIMIT)
+       stats[source]["downloaded"]+=1
        filename=Path(urllib.parse.urlsplit(link).path).name
        if zipfile.is_zipfile(io.BytesIO(raw)):filename+=".zip"
        data,ext=extract_uploaded_subtitle(raw,filename,number)
-       if not valid(data,ext):continue
+       if not valid(data,ext):
+        stats[source]["rejected"]+=1;continue
        quality=subtitle_quality.evaluate(data,ext)
-       if quality["level"]=="blocked":continue
+       if quality["level"]=="blocked":
+        stats[source]["rejected"]+=1;continue
        digest=hashlib.sha256(data).hexdigest();local="local-subtitle://"+digest
        folder=DATA/"candidate_uploads";folder.mkdir(parents=True,exist_ok=True)
        target=folder/digest
        if not target.exists():target.write_bytes(data)
        name=number+"-zh."+ext
        c.execute("INSERT OR REPLACE INTO candidates(path,name,url,ext,source) VALUES(?,?,?,?,?)",(str(p),name,local,ext,source))
+       stats[source]["accepted"]+=1
        imported.append({"source":source,"name":name,"score":quality["score"],"page":page_url})
       except (OSError,ValueError,zipfile.BadZipFile) as exc:errors[source]=str(exc)[:140]
     except (OSError,ValueError) as exc:errors[source]=str(exc)[:140]
   c.commit()
-  return {"items":imported,"errors":errors,"pages":{k:len(v) for k,v in pages.items()}}
+  return {"items":imported,"errors":errors,"stats":stats,"pages":{k:len(v) for k,v in pages.items()}}
 @app.post("/api/candidates/upload")
 async def upload_candidate(request:Request,path:str,filename:str):
  auth(request)
@@ -606,7 +611,9 @@ async function show(path,tr){
     discover.disabled=true;discover.textContent="正在检索及验证…";
     try{
      let out=await api("/api/candidates/discover","POST",{path});
-     msg("新增 "+out.items.length+" 个已验证候选；"+Object.entries(out.errors).map(([k,v])=>k+"："+v).join("；"));
+     let diagnostics=Object.entries(out.stats||{}).map(([k,v])=>k+"：页面 "+v.pages+" / 链接 "+v.download_links+" / 下载 "+v.downloaded+" / 通过 "+v.accepted+" / 拒绝 "+v.rejected+(out.errors[k]?"；原因："+out.errors[k]:"")).join(" | ");
+     msg("外部搜索完成，新增 "+out.items.length+" 个候选。"+diagnostics);
+     cell.append(el("p","搜索诊断："+diagnostics));
      await render();
     }catch(e){msg("外部搜索失败："+e.message);discover.disabled=false;discover.textContent="重试外部搜索"}
    };
