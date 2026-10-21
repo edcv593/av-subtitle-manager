@@ -169,3 +169,8 @@ SCAN_HOURS: "12"
 「场景一致性检查说明」不会读取视频或音频，不能证明译文符合画面；仍需播放器人工核对。AI 润色建议默认关闭。若希望启用，可在 Compose 的 environment 中设置 `SUBTITLE_AI_API_KEY`（OpenAI API Key），可选设置 `SUBTITLE_AI_MODEL`（默认 `gpt-4o-mini`）。该功能仅向 `https://api.openai.com/v1/chat/completions` 发送字幕文本片段，返回最多十条供人工勾选的建议；不自动应用，且建议需要再次预览及确认。使用该功能意味着字幕文本会传输到外部服务。不要把真实 API Key 提交到 GitHub。远程 NAS 模式不会读取视频内容。
 
 注意：OpenCC 不等于翻译校对；AI 文本润色不能验证原声或场景，也不保证翻译准确。当前优化器仅支持 UTF-8 字幕，其他编码会被拒绝，避免静默损坏。先在少量字幕上验证播放器效果。
+
+
+### 网页配置 DeepSeek / OpenAI API
+
+连接 WEB_TOKEN 后，网页顶部「AI 接口设置」可选择 DeepSeek 或 OpenAI、填写模型及 API Key，保存后点击「测试连接」。DeepSeek 默认模型为 `deepseek-flash`，接口固定 `https://api.deepseek.com/chat/completions`；OpenAI 默认模型为 `gpt-4o-mini`。不接受任意自定义 URL，以防 SSRF。配置保存至挂载的 `/data/ai_provider.json`，仅服务端读取；文件权限设置为 0600，网页仅显示是否配置，不返回 API Key。**密钥在 NAS 磁盘中以明文保存**，请保护 /data 目录和 WEB_TOKEN，避免备份公开。点击「清除密钥」可以删除保存的 Key。无需再设置 `SUBTITLE_AI_API_KEY`，网页设置优先用于字幕润色。
