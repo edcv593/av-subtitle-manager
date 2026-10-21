@@ -779,12 +779,16 @@ async function show(path,tr){
     simplify.onchange=()=>{pending=null;applyBtn.disabled=true};
     punct.onchange=()=>{pending=null;applyBtn.disabled=true};
     sceneBtn.onclick=()=>{result.replaceChildren(el("p","远程 NAS 不读取视频或音频，无法自动核对场景。建议对照播放器中的对白与字幕；仅凭文本分析不能确认译文准确。"))};
+    let aiOffset=0;let aiFinished=false;
     aiBtn.onclick=async()=>{
-     if(!confirm("AI 润色将向外部 API 发送最多 12000 字符的中文字幕"+(referenceId?"及最多 6000 字符的参考字幕":"")+"。确认继续？"))return;
-     aiBtn.disabled=true;result.replaceChildren(el("p","正在请求 AI 文本建议（不会自动保存）…"));
+     if(aiFinished){aiOffset=0;aiFinished=false}
+     if(!confirm("本次仅向外部 API 发送一批最多 12000 字符的中文字幕"+(referenceId?"及最多 6000 字符的参考字幕":"")+"。确认继续？"))return;
+     aiBtn.disabled=true;result.append(el("p","正在请求当前批次的 AI 文本建议（不会自动保存）…"));
      try{
-      let out=await api("/api/subtitles/optimize/ai","POST",{path,reference_id:referenceId});
-      result.replaceChildren(el("p",out.notice));
+      let out=await api("/api/subtitles/optimize/ai","POST",{path,reference_id:referenceId,offset:aiOffset});
+      aiOffset=out.next_offset;aiFinished=out.done;
+      aiBtn.textContent=out.done?"重新从头校对":"校对下一批字幕";
+      result.append(el("p",out.notice+" · "+(out.done?"全部批次已完成":"可继续下一批")));
       for(let suggestion of out.suggestions){
        let item=el("div");let check=el("input");check.type="checkbox";
        check.onchange=()=>{if(check.checked)replacements[suggestion.before]=suggestion.after;else delete replacements[suggestion.before];pending=null;applyBtn.disabled=true};
