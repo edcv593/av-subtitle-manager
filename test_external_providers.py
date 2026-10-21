@@ -1,5 +1,6 @@
 import unittest
-from external_providers import indexed_pages,detail_downloads,native_search
+import json
+from external_providers import indexed_pages,detail_downloads,native_search,javzimu_results
 
 class ProviderTests(unittest.TestCase):
  def test_index_filters_unrelated_and_offsite_results(self):
@@ -29,6 +30,19 @@ class ProviderTests(unittest.TestCase):
   self.assertEqual(found["JAV字幕"],[])
   self.assertIn("JAV字幕",errors)
   self.assertEqual(stats["Subtitle Cat"]["links_seen"],1)
+ def test_javzimu_json_search(self):
+  data=json.dumps({"data":[{"name":"IPZZ-791 中文字幕","cid":"abc123","ext":"srt"},{"name":"IPZZ-792","cid":"abc124","ext":"srt"},{"name":"IPZZ-791","cid":"../../etc","ext":"srt"}]}).encode()
+  found,errors,stats=native_search("IPZZ-791",lambda url,limit:data,source="JAV字幕")
+  self.assertEqual(len(found["JAV字幕"]),1)
+  self.assertIn("/api/download?cid=abc123",found["JAV字幕"][0])
+  self.assertEqual(errors,{})
+  self.assertEqual(stats["JAV字幕"]["links_seen"],1)
+ def test_javzimu_rejects_invalid_json(self):
+  with self.assertRaises(ValueError):javzimu_results(b"<html>error</html>","IPZZ-791")
+ def test_avsubtitles_details_context(self):
+  html=b'<div><h4>IPZZ-791 (2026)</h4><a href="/movie1234/example">Details</a></div>'
+  found,errors,stats=native_search("IPZZ-791",lambda url,limit:html,source="AVSubtitles")
+  self.assertEqual(found["AVSubtitles"],["https://www.avsubtitles.com/movie1234/example"])
  def test_avsubtitles_zip_link(self):
   page=b'<a href="/download_sub.php?subid=10845&amp;revid=1">SSIS-334-zh.zip</a>'
   links=detail_downloads("AVSubtitles","https://www.avsubtitles.com/subtitles.php?subid=10845",page)
