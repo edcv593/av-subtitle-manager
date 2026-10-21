@@ -35,6 +35,16 @@ class ReferenceSubtitleTests(unittest.TestCase):
  def test_srt_reference_excerpt(self):
   raw=b"1\n00:00:01,000 --> 00:00:02,000\nHello\n"
   self.assertIn("Hello",reference_excerpt(raw,"srt"))
+ def test_reference_matches_chinese_time_window(self):
+  chinese=b"1\n00:00:01,000 --> 00:00:02,000\nChinese\n"
+  japanese=(b"1\n00:00:01,200 --> 00:00:02,100\nJapanese near\n\n"
+            b"2\n01:00:00,000 --> 01:00:02,000\nJapanese far\n")
+  excerpt=opt.reference_for_window(chinese,"srt",japanese,"srt")
+  self.assertIn("Japanese near",excerpt)
+  self.assertNotIn("Japanese far",excerpt)
+ def test_reference_rejects_invalid_timeline(self):
+  with self.assertRaises(ValueError):
+   opt.reference_for_window(SRT,"srt",b"not a subtitle","srt")
  def test_reject_invalid_reference(self):
   with self.assertRaises(ValueError):reference_excerpt(b"hello","srt")
 
