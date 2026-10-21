@@ -71,3 +71,43 @@ def detail_downloads(source,url,page,max_links=8):
   if target not in result:result.append(target)
   if len(result)>=max_links:break
  return result
+
+# Independent on-site search adapters. A source failure never blocks other sites.
+SEARCH_ENDPOINTS={
+ "AVSubtitles":lambda code:"https://www.avsubtitles.com/search_results.php?"+urllib.parse.urlencode({"search":code,"scope":"title"}),
+ "Subtitle Cat":lambda code:"https://www.subtitlecat.com/?"+urllib.parse.urlencode({"search":code}),
+ "JAV字幕":lambda code:"https://javzimu.com/?"+urllib.parse.urlencode({"s":code}),
+}
+class SearchLinks(HTMLParser):
+ def __init__(self):
+  super().__init__();self.links=[];self.href=None;self.parts=[]
+ def handle_starttag(self,tag,attrs):
+  if tag=="a":
+   self.href=dict(attrs).get("href");self.parts=[]
+ def handle_data(self,data):
+  if self.href is not None:self.parts.append(data)
+ def handle_endtag(self,tag):
+  if tag=="a" and self.href is not None:
+   self.links.append((self.href," ".join(self.parts).strip()))
+   self.href=None;self.parts=[]
+
+def native_search(number,fetch_text,max_pages=5):
+ """Search each provider's own HTML results, without Bing or fabricated matches."""
+ found={};errors={};stats={}
+ for source,make_url in SEARCH_ENDPOINTS.items():
+  url=make_url(number);pages=[];stats[source]={"search_url":url,"links_seen":0}
+  try:
+   raw=fetch_text(url,350000)
+   parser=SearchLinks();parser.feed(raw.decode("utf-8","replace"))
+   stats[source]["links_seen"]=len(parser.links)
+   for href,title in parser.links:
+    target=urllib.parse.urljoin(url,html.unescape(href))
+    parsed=urllib.parse.urlsplit(target)
+    if parsed.scheme!="https" or parsed.hostname not in (SITES[source],"www."+SITES[source]):continue
+    if not DETAIL_PATTERNS[source].search(parsed.path+("?"+parsed.query if parsed.query else "")):continue
+    if number not in {film_code(title),film_code(urllib.parse.unquote(parsed.path))}:continue
+    if target not in pages:pages.append(target)
+    if len(pages)>=max_pages:break
+  except Exception as exc:errors[source]=str(exc)[:160]
+  found[source]=pages
+ return found,errors,stats
