@@ -475,6 +475,16 @@ async def enqueue_review_jobs(request:Request):
    items.append({"id":row["id"],"path":str(p),"created":created,"status":row["status"]})
  return {"items":items,"created":sum(int(x["created"]) for x in items)}
 
+@app.post("/api/review/jobs/retry-legacy")
+async def retry_legacy_review_jobs(request:Request):
+ auth(request);body=await request.json()
+ paths=body.get("paths",[])
+ if not isinstance(paths,list) or len(paths)>500 or any(not isinstance(p,str) for p in paths):
+  raise HTTPException(400,"影片路径列表无效")
+ with closing(db()) as c:
+  count=review_queue.retry_legacy_subtitle_selection(c,paths)
+ return {"retried":count}
+
 @app.post("/api/review/jobs/{job_id}/action")
 async def review_job_action(request:Request,job_id:int):
  auth(request);body=await request.json()
@@ -1294,6 +1304,7 @@ async function reviewQueue(){
   const autoLabel=el("label");autoLabel.append(auto,document.createTextNode(" 校对完成后自动应用无冲突建议并备份（可选）"));
   const start=el("button","将全部待审核影片加入 NAS 队列");start.className="primary";
   const refresh=el("button","刷新任务状态");
+  const retryLegacy=el("button","一键重试旧版拦截任务");
   const progress=el("p","后台任务可在关闭网页后继续运行。");progress.setAttribute("role","status");
   const table=el("table");const head=el("thead");head.innerHTML="<tr><th>影片</th><th>状态与进度</th><th>操作</th></tr>";
   const body=el("tbody");table.append(head,body);
@@ -1352,8 +1363,16 @@ async function reviewQueue(){
    }catch(e){progress.textContent="入队失败："+e.message}
    finally{start.disabled=false}
   };
+  retryLegacy.onclick=async()=>{
+   retryLegacy.disabled=true;progress.textContent="正在恢复旧版因多字幕限制而停止的任务…";
+   try{
+    const result=await api("/api/review/jobs/retry-legacy","POST",{paths:items.map(x=>x.path)});
+    await refreshJobs();progress.textContent="已恢复 "+result.retried+" 个旧版拦截任务，NAS 将继续后台校对。";
+   }catch(e){progress.textContent="批量恢复失败："+e.message}
+   finally{retryLegacy.disabled=false}
+  };
   refresh.onclick=async()=>{refresh.disabled=true;try{await refreshJobs()}finally{refresh.disabled=false}};
-  panel.append(help,autoLabel,start,refresh,progress,table);
+  panel.append(help,autoLabel,start,retryLegacy,refresh,progress,table);
   await refreshJobs();
   window.reviewQueueTimer=setInterval(()=>{if(panel.isConnected&&!document.hidden)refreshJobs();else if(!panel.isConnected){clearInterval(window.reviewQueueTimer);window.reviewQueueTimer=null}},8000);
  }catch(e){panel.replaceChildren(el("p","NAS 队列加载失败："+e.message+"。请检查是否已更新容器、WEB_TOKEN 和 NAS 日志。"))}
