@@ -1127,6 +1127,59 @@ async function show(path,tr){
     };
     if(referenceId)refInfo.textContent="已恢复之前上传的参考字幕："+referenceId+"（可直接继续翻译）";
     panel.append(refInfo,refInput,refButton);
+    let compareBox=el("div");compareBox.style.padding="12px";compareBox.style.border="1px solid #d5dce5";compareBox.style.borderRadius="9px";compareBox.style.margin="10px 0";
+    compareBox.append(el("h4","智能校对现有中文字幕（优先）"));
+    compareBox.append(el("p","先上传日语原生字幕或其他中文版本，系统按时间轴对照，仅建议有证据的改动；不会重新翻译整部影片。"));
+    let compareInput=el("input");compareInput.type="file";compareInput.multiple=true;compareInput.accept=".srt,.ass,.ssa,.vtt";
+    let compareUpload=el("button","添加对照字幕（最多3份）");
+    let compareStart=el("button","开始多字幕 AI 校对");
+    let compareNext=el("button","继续校对下一批");compareNext.disabled=true;
+    let compareState=el("p","等待参考字幕");let compareResults=el("div");
+    let compareIds=[],compareOffset=0,compareSha=null,compareBusy=false;
+    compareBox.append(compareInput,compareUpload,compareStart,compareNext,compareState,compareResults);panel.append(compareBox);
+    compareUpload.onclick=async()=>{
+     let files=Array.from(compareInput.files||[]);
+     if(!files.length){compareState.textContent="请先选择参考字幕文件";return}
+     compareUpload.disabled=true;
+     try{
+      for(let f of files){
+       if(compareIds.length>=3)throw Error("最多上传三份参考字幕");
+       let query=new URLSearchParams({path,filename:f.name});
+       let response=await fetch("/api/subtitles/reference/upload?"+query,{method:"POST",headers:{"X-Auth-Token":token,"Content-Type":"application/octet-stream"},body:f});
+       let out=await response.json();if(!response.ok)throw Error(out.detail||response.status);
+       if(!compareIds.includes(out.id))compareIds.push(out.id);
+      }
+      compareState.textContent="已添加 "+compareIds.length+" 份参考字幕，原始文件不会被更改。";
+     }catch(e){compareState.textContent="参考字幕上传失败："+e.message}
+     finally{compareUpload.disabled=false}
+    };
+    const compareRun=async(restart)=>{
+     if(compareBusy)return;
+     let ids=compareIds.slice();if(referenceId&&!ids.includes(referenceId))ids.unshift(referenceId);
+     ids=ids.slice(0,3);
+     if(!ids.length){compareState.textContent="请先上传日语或其他中文字幕作为对照";return}
+     if(restart){compareOffset=0;compareSha=null;compareResults.replaceChildren();}
+     if(!confirm("将本批中文字幕及匹配的参考字幕文本发送给已配置的 AI 校对服务。不会自动保存，确认？"))return;
+     compareBusy=true;compareStart.disabled=true;compareNext.disabled=true;
+     compareState.textContent="正在对照第 "+(compareOffset+1)+" 条起的25条字幕…";
+     try{
+      let out=await api("/api/subtitles/compare/review","POST",{path,reference_ids:ids,offset:compareOffset,original_sha256:compareSha,ai:true});
+      compareSha=out.original_sha256;compareOffset=out.next_offset;
+      compareState.textContent="已检查 "+compareOffset+"/"+out.total+" 条 · 本批匹配 "+out.matched+"/"+out.rows.length+" 条 · AI 建议 "+(out.suggestions||[]).length+" 条。"+(out.done?" 已检查完成。":"可继续下一批。");
+      for(let suggestion of out.suggestions||[]){
+       let item=el("div");item.style.borderBottom="1px solid #e4e7ed";item.style.padding="8px 0";
+       let check=el("input");check.type="checkbox";
+       check.onchange=()=>{if(check.checked)replacements[suggestion.before]=suggestion.after;else delete replacements[suggestion.before];pending=null;applyBtn.disabled=true};
+       let explanation=el("p","原译："+suggestion.before+" → 建议："+suggestion.after+"\n理由："+suggestion.reason);
+       explanation.style.whiteSpace="pre-wrap";
+       item.append(check,explanation);compareResults.append(item);
+      }
+      compareNext.disabled=out.done;
+     }catch(e){compareState.textContent="智能校对失败："+e.message}
+     finally{compareBusy=false;compareStart.disabled=false}
+    };
+    compareStart.onclick=()=>compareRun(true);
+    compareNext.onclick=()=>compareRun(false);
     let autoBtn=el("button","一键获取日语参考并整片 AI 校对");
     let autoStatus=el("p","自动流程不会覆盖原字幕；AI 建议需人工勾选并预览保存。");
     panel.append(autoBtn,autoStatus);
@@ -1352,6 +1405,10 @@ async function show(path,tr){
      try{let out=await api("/api/subtitles/optimize/apply","POST",{...config(),original_sha256:pending.original_sha256,optimized_sha256:pending.optimized_sha256});msg("字幕优化成功，修改 "+out.changed+" 行；备份："+out.backup);await render()}
      catch(e){result.append(el("p","保存失败："+e.message));applyBtn.disabled=false}
     };
+    let advancedTools=el("details");advancedTools.style.marginTop="12px";
+    let advancedLabel=el("summary","高级工具：整片 Google/DeepL 初译及旧版 AI 校对");
+    advancedTools.append(advancedLabel,autoBtn,autoStatus,translationEngine,googleBtn,googlePause,googleStatus,googleProgress,googleProgressDetail,googleRetry,googleErrors,googleSuggestions,googlePreview,aiBtn,sceneBtn);
+    panel.append(advancedTools);
     cell.append(panel);
    }
 
