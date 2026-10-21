@@ -45,6 +45,23 @@ class ReferenceSubtitleTests(unittest.TestCase):
  def test_reference_rejects_invalid_timeline(self):
   with self.assertRaises(ValueError):
    opt.reference_for_window(SRT,"srt",b"not a subtitle","srt")
+ def test_ai_batch_complete_lines(self):
+  raw=("1\n00:00:01,000 --> 00:00:02,000\n中文第一句\n\n2\n00:00:03,000 --> 00:00:04,000\n中文第二句\n").encode()
+  first,nxt,done=opt.ai_batch(raw,0,55)
+  self.assertFalse(done)
+  second,last,done=opt.ai_batch(raw,nxt,55)
+  self.assertTrue(done)
+  self.assertEqual(first+second,raw.decode())
+  self.assertEqual(last,len(raw.decode()))
+ def test_ai_batch_rejects_midline_offset(self):
+  with self.assertRaises(ValueError):opt.ai_batch(SRT,2)
+ def test_second_batch_reference_uses_later_cues(self):
+  chinese=("1\n00:00:01,000 --> 00:00:02,000\n中文一\n\n2\n00:00:10,000 --> 00:00:11,000\n中文二\n").encode()
+  japanese=("1\n00:00:01,000 --> 00:00:02,000\n日本語一\n\n2\n00:00:10,000 --> 00:00:11,000\n日本語二\n").encode()
+  _,offset,_=opt.ai_batch(chinese,0,40)
+  result=opt.reference_for_window(chinese,"srt",japanese,"srt",offset=offset)
+  self.assertIn("日本語二",result)
+  self.assertNotIn("日本語一",result)
  def test_reject_invalid_reference(self):
   with self.assertRaises(ValueError):reference_excerpt(b"hello","srt")
 
