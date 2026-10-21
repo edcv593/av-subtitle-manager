@@ -62,6 +62,11 @@ class WebHTMLTests(unittest.TestCase):
   self.assertIn('api("/api/review/jobs")',html)
   self.assertIn("NAS 后台校对队列",html)
   self.assertIn("自动应用无冲突建议并备份",html)
+  self.assertIn("window.reviewQueueTimer=setInterval",html)
+  self.assertIn("review_queue.recover(c)",code)
+  self.assertIn("with closing(db()) as c:",code)
+  docker=pathlib.Path("Dockerfile").read_text(encoding="utf-8")
+  self.assertIn("review_queue.py",docker)
  def test_comparison_previews_alignment_before_ai(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
