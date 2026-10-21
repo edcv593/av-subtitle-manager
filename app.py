@@ -831,7 +831,18 @@ async function show(path,tr){
      a.target="_blank";a.rel="noopener noreferrer";a.style.marginRight="16px";
      panel.append(a);
     }
-    panel.append(el("p","JAV字幕需要在新打开的网页里手动完成验证码；下载后使用下方「上传字幕 / ZIP」导入。AVSubtitles 的日语字幕可作为后续翻译参考，不能当作中文字幕直接覆盖。"));
+    panel.append(el("p","AVSubtitles 的日语字幕详情页不是字幕文件直链：请打开详情页，下载 SRT 后，在上方「上传原语言参考字幕」中上传用于 DeepSeek 校对；不要作为中文字幕候选替换。"));
+    let avDetail=el("input");avDetail.placeholder="粘贴 AVSubtitles 字幕详情页地址（/movie.../subtitles/ja/...）";avDetail.style.width="65%";
+    let openDetail=el("button","打开 AVSubtitles 详情页");
+    openDetail.onclick=()=>{
+     try{
+      let u=new URL(avDetail.value.trim());
+      if(u.protocol!=="https:"||!["avsubtitles.com","www.avsubtitles.com"].includes(u.hostname)||!/^\\/movie\\d+\\/[^?#]+\\/subtitles\\/(ja|zh|en)\\/\\d+\\/?$/i.test(u.pathname))throw Error("请输入 AVSubtitles 的字幕详情页链接");
+      window.open(u.href,"_blank","noopener,noreferrer");
+     }catch(e){msg("详情页地址无效："+e.message)}
+    };
+    panel.append(avDetail,openDetail);
+    panel.append(el("p","JAV字幕：点击上方搜索链接，在新网页中由你手动输入图片验证码；验证后下载字幕，再使用「上传字幕 / ZIP 并审核」。NAS 不自动识别验证码。"));
     cell.append(panel);
    }
    let importBox=el("div");let urlInput=el("input");urlInput.placeholder="粘贴 HTTPS 字幕文件直链（.srt/.ass/.ssa/.vtt）";urlInput.style.width="65%";
