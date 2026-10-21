@@ -303,10 +303,29 @@ def review_auto_reference(p):
  """Best-effort public reference retrieval; never accesses video contents."""
  number=code(p.name)
  if not number:return None
+ # Prefer already downloaded local Japanese subtitles before any network call.
+ for existing in subtitle_files.subtitles_for(p):
+  try:
+   if existing.stat().st_size>LIMIT:continue
+   data=existing.read_bytes();ext=existing.suffix.lower().lstrip(".")
+   if not valid(data,ext):continue
+   rows=subtitle_compare.entries(data,ext)
+   if sum(bool(subtitle_compare.JAPANESE.search(row["text"])) for row in rows)<max(1,len(rows)//3):continue
+   digest=hashlib.sha256(data).hexdigest()
+   folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
+   target=folder/(digest+"."+ext)
+   if not target.exists():target.write_bytes(data)
+   with closing(db()) as c:
+    c.execute("INSERT OR REPLACE INTO video_references VALUES(?,?,?)",(str(p),target.name,time.time()));c.commit()
+   return target.name
+  except (OSError,ValueError,UnicodeError):continue
+ details=[]
  try:
   url=external_providers.SEARCH_ENDPOINTS["AVSubtitles"](number)
   page=fetch_site_search(url,350000)
   details=external_providers.avsubtitles_reference_pages(number,page,max_items=4)
+ except Exception as exc:log.info("AVSubtitles direct search unavailable for %s: %s",number,exc)
+ try:
   if not details:
    pages,_,_=external_providers.native_search(number,fetch_site_search,max_pages=2,source="AVSubtitles")
    for movie in pages.get("AVSubtitles",[])[:2]:
