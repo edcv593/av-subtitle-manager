@@ -2,12 +2,14 @@ import os,re,time,json,sqlite3,threading,logging,secrets,urllib.request,urllib.p
 from pathlib import Path
 from fastapi import FastAPI,Request,HTTPException
 from fastapi.responses import HTMLResponse
+import timeline
 from timeline import assess,video_duration
 from reliability import embedded_chinese,score,should_skip,next_retry
 import ai_queue
 import subtitle_files
 import subtitle_quality
 import external_providers
+import subtitle_optimizer
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
@@ -426,6 +428,63 @@ def subtitle_audit(request:Request,path:str):
     items.append({"name":q.name,"size":size,"valid":valid(data,q.suffix.lower().lstrip(".")),"timeline":report,"quality":subtitle_quality.evaluate(data,q.suffix.lower().lstrip("."))})
    except (OSError,ValueError) as exc:items.append({"name":q.name,"error":str(exc)[:200]})
   return {"items":items,"backups":[q.name for q in subtitle_files.backups_for(p)]}
+@app.post("/api/subtitles/optimize/preview")
+async def optimize_preview(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
+  files=subtitle_files.subtitles_for(p)
+  if len(files)!=1:raise HTTPException(409,"必须恰好有一份外挂字幕")
+  target=files[0]
+  if target.stat().st_size>LIMIT:raise HTTPException(413,"字幕文件过大")
+  raw=target.read_bytes();ext=target.suffix.lower().lstrip(".")
+  try:
+   report=subtitle_optimizer.preview(raw,ext,body.get("simplify",True),body.get("punctuation",True),body.get("replacements"))
+   optimized,_=subtitle_optimizer.optimize(raw,ext,body.get("simplify",True),body.get("punctuation",True),body.get("replacements"))
+   if timeline.cues(raw,ext)!=timeline.cues(optimized,ext):raise ValueError("时间轴发生变化，已拒绝")
+   report["timeline_unchanged"]=True;report["subtitle"]=target.name
+   report["scene_check"]="未读取视频；仅凭字幕不能判断场景匹配或翻译准确性。请在播放器中核对。"
+   return report
+  except (ValueError,UnicodeError) as exc:raise HTTPException(422,str(exc)[:180])
+@app.post("/api/subtitles/optimize/apply")
+async def optimize_apply(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
+  files=subtitle_files.subtitles_for(p)
+  if len(files)!=1:raise HTTPException(409,"必须恰好有一份外挂字幕")
+  target=files[0]
+  if target.stat().st_size>LIMIT:raise HTTPException(413,"字幕文件过大")
+  raw=target.read_bytes();ext=target.suffix.lower().lstrip(".")
+  if subtitle_optimizer.digest(raw)!=body.get("original_sha256"):raise HTTPException(409,"字幕已发生变化，请重新预览")
+  try:
+   optimized,changes=subtitle_optimizer.optimize(raw,ext,body.get("simplify",True),body.get("punctuation",True),body.get("replacements"))
+   if not changes:raise ValueError("没有需要保存的修改")
+   if timeline.cues(raw,ext)!=timeline.cues(optimized,ext):raise ValueError("时间轴发生变化，已拒绝")
+   if subtitle_optimizer.digest(optimized)!=body.get("optimized_sha256"):raise ValueError("预览与实际修改不一致")
+   if not valid(optimized,ext):raise ValueError("修改后字幕格式无效")
+   if subtitle_quality.evaluate(optimized,ext)["level"]=="blocked":raise ValueError("修改后字幕质量不合格")
+   saved,backup=subtitle_files.replace(p,optimized,ext)
+   reset_retry(c,p);record(c,p,code(p.name),"existing","Optimized subtitle | backup="+backup.name)
+   return {"ok":True,"file":saved.name,"backup":backup.name,"changed":len(changes),"timeline_unchanged":True}
+  except (OSError,ValueError,UnicodeError) as exc:raise HTTPException(422,str(exc)[:180])
+@app.post("/api/subtitles/optimize/ai")
+async def optimize_ai(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  files=subtitle_files.subtitles_for(p)
+  if len(files)!=1:raise HTTPException(409,"必须恰好有一份外挂字幕")
+  target=files[0]
+  if target.stat().st_size>LIMIT:raise HTTPException(413,"字幕文件过大")
+  key=os.getenv("SUBTITLE_AI_API_KEY","")
+  if not key:raise HTTPException(503,"未配置 SUBTITLE_AI_API_KEY；AI 润色默认关闭")
+  try:
+   suggestions=subtitle_optimizer.ai_suggestions(target.read_bytes(),target.suffix.lower().lstrip("."),key,os.getenv("SUBTITLE_AI_MODEL","gpt-4o-mini"))
+   return {"suggestions":suggestions,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
+  except Exception as exc:raise HTTPException(502,"AI 建议失败："+str(exc)[:160])
 @app.post("/api/candidates/quality")
 async def candidate_quality(request:Request):
  auth(request);body=await request.json()
