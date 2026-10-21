@@ -7,7 +7,7 @@ from html.parser import HTMLParser
 
 SITES={"AVSubtitles":"avsubtitles.com","Subtitle Cat":"subtitlecat.com","JAV字幕":"javzimu.com"}
 DETAIL_PATTERNS={
- "AVSubtitles":re.compile(r"/subtitles\.php\?[^#]*subid=\d+",re.I),
+ "AVSubtitles":re.compile(r"(?:/subtitles\\.php\\?[^#]*subid=\\d+|/movie\\d+/[^?#]+/subtitles/[^?#]+/\\d+)",re.I),
  "Subtitle Cat":re.compile(r"/subs/\d+/[^?#]+\.html$",re.I),
  "JAV字幕":re.compile(r"/[^?#]+",re.I),
 }
@@ -21,7 +21,7 @@ def indexed_pages(number,fetch_text,max_pages=5):
  """Find likely detail pages via Bing's public RSS search; failures stay per-source."""
  found={};errors={}
  for source,domain in SITES.items():
-  query="site:"+domain+" "+number+" subtitle"
+  query="site:"+domain+" \\""+number+"\\""
   url="https://www.bing.com/search?"+urllib.parse.urlencode({"q":query,"format":"rss"})
   try:
    data=fetch_text(url,250000)
@@ -32,7 +32,7 @@ def indexed_pages(number,fetch_text,max_pages=5):
     link=html.unescape(item.findtext("link",""))
     parsed=urllib.parse.urlsplit(link)
     if parsed.scheme!="https" or parsed.hostname not in (domain,"www."+domain):continue
-    if film_code(title+" "+urllib.parse.unquote(parsed.path))!=number:continue
+    if number not in {film_code(title),film_code(urllib.parse.unquote(parsed.path))}:continue
     if not DETAIL_PATTERNS[source].search(parsed.path+("?"+parsed.query if parsed.query else "")):continue
     if link not in pages:pages.append(link)
     if len(pages)>=max_pages:break
