@@ -34,6 +34,18 @@
 Compose 的 `/data` 与 `/media` 卷映射必须保持不变；不要使用清理卷或删除数据的重建选项。
 本阶段如遇 UI 兼容问题，可回滚到旧镜像，原数据库和字幕文件无需迁移。
 
+## DeepL API 翻译（新增）
+
+字幕初译支持「Google 免费翻译（实验性）」和「DeepL API」。两者共用现有 SRT 分批进度、失败条目重试、DeepSeek 润色以及人工预览/保存流程，不会读取视频或音频。
+
+1. 登录 NAS Web 管理页面，展开「设置 · AI 服务与密钥」，在「DeepL 初译 API」选择 `API Free` 或 `API Pro`，输入 DeepL API Key，点击「保存 DeepL」，然后「测试 DeepL」。
+2. 影片字幕审核中上传日语 SRT 或获取日语参考字幕，在「初译引擎」选择「DeepL API（Free / Pro）」，点击「开始初译 → DeepSeek 润色」。
+3. DeepL 只负责日语转中文初稿；DeepSeek 是另一个独立配置的 AI 服务，需要单独的 API Key。网络失败/额度耗尽会显示失败原因；未处理完失败条目不允许生成中文字幕。
+
+DeepL Free 使用 `https://api-free.deepl.com/v2/translate`，DeepL Pro 使用 `https://api.deepl.com/v2/translate`；请求发送 `JA`→`ZH` 字幕正文。Free 并非无需注册的匿名接口，需要 DeepL API Free 的 Key，免费额度和费用以 DeepL 官方账号说明为准。
+
+DeepL Key 存储在 NAS `/data/deepl_settings.json`，不会回显，不需要写入 Compose 或 `.env`。不同翻译引擎的草稿分开存储，现有 Google 草稿不会被 DeepL 覆盖。与已有逻辑相同，最终 `.zh.srt` 文件不会覆盖同名字幕。
+
 ## GHCR Docker 镜像
 
 - 最新镜像：`ghcr.io/edcv593/av-subtitle-manager:latest`
