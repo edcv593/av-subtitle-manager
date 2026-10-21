@@ -15,6 +15,16 @@ class WebHTMLTests(unittest.TestCase):
  def test_external_search_is_threaded(self):
   code=pathlib.Path("app.py").read_text(encoding="utf-8")
   self.assertIn("await asyncio.to_thread(external_providers.native_search",code)
+ def test_google_translation_progress_is_visible(self):
+  tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
+  html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
+  self.assertIn('el("progress")',html)
+  self.assertIn('googleProgressUpdate(',html)
+  self.assertIn('setInterval(()=>googleProgressUpdate(',html)
+  self.assertIn('翻译中断：',html)
+  self.assertIn('暂停（本批结束后）',html)
+  self.assertIn('"/api/subtitles/translate/status"',html)
+  self.assertIn('"/api/subtitles/translate/google"',html)
  def test_missing_subtitle_videos_can_open_review(self):
   tree=ast.parse(pathlib.Path("app.py").read_text(encoding="utf-8"))
   html=next(node.value.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=="HTML" for t in node.targets))
