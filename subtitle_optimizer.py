@@ -79,16 +79,23 @@ def preview(raw,ext,simplify=True,punctuation=True,replacements=None):
  data,changes=optimize(raw,ext,simplify,punctuation,replacements)
  return {"original_sha256":digest(raw),"optimized_sha256":digest(data),"changed":len(changes),"changes":changes[:60],"truncated":len(changes)>60,"original_size":len(raw),"optimized_size":len(data)}
 
-def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.openai.com/v1/chat/completions"):
+def reference_excerpt(raw,ext,max_chars=6000):
+ """Bounded, text-only reference; rejects malformed subtitle timelines."""
+ import timeline
+ if ext not in ("srt","vtt","ass","ssa") or not timeline.cues(raw,ext):
+  raise ValueError("参考字幕格式或时间轴无效")
+ text=raw.decode("utf-8-sig","replace")
+ return text[:max_chars]
+
+def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.openai.com/v1/chat/completions",reference=None):
  """Optional external text-only suggestions. Never automatically edits files."""
  if not api_key:raise ValueError("未配置字幕润色 API Key")
- _,changes=edit_cues(raw,ext,lambda s:s)
  # Collect text from the subtitle using a deliberately bounded window.
  sample=raw.decode("utf-8-sig","replace")[:12000]
- prompt=("你是中文字幕编辑。仅根据提供的字幕文本和上下文建议更通顺的简体中文；"
+ prompt=("你是中文字幕编辑。优先依据带时间戳的原语言参考字幕对照现有中文；仅在能够合理对齐时建议更准确、更通顺的简体中文；"
          "无法从字幕文本验证真实场景或原语言准确性，不要臆造。"
          "只输出JSON对象，格式为{\"suggestions\":[{\"before\":\"原文\",\"after\":\"建议\"}]}。"
-         "最多10条，每条before必须与原文完整一行相同，不修改时间轴。\n"+sample)
+         "最多10条，每条before必须与中文原文完整一行相同，不修改时间轴。\n现有中文字幕：\n"+sample+("\n原语言参考字幕（时间轴可能存在偏移，仅作参考）：\n"+reference if reference else ""))
  payload=json.dumps({"model":model,"messages":[{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.2,"max_tokens":1200}).encode()
  request=urllib.request.Request(endpoint,data=payload,headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
  with urllib.request.urlopen(request,timeout=40) as response:
