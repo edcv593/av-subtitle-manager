@@ -165,7 +165,7 @@ def native_search(number,fetch_text,max_pages=5,source=None):
    raw=fetch_text(url,350000)
    if site=="JAV字幕":
     # Use the public JSON search endpoint rather than scraping the interactive search UI.
-    if b"captcha" in raw.lower() or "验证码" in raw.decode("utf-8","replace"):
+    if b"captcha" in raw.lower() or any(word in raw.decode("utf-8","replace") for word in ("验证码","图片验证","人机验证","安全验证")):
      errors[site]="站点要求人工验证码，无法在 NAS 后端继续搜索"
      found[site]=[]
      continue
