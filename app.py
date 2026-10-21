@@ -354,7 +354,9 @@ def review_worker_one(job):
    if not reference_id:
     refrow=c.execute("SELECT reference_id FROM video_references WHERE video_path=?",(str(p),)).fetchone()
     reference_id=refrow["reference_id"] if refrow else ""
-  if not reference_id:reference_id=review_auto_reference(p)
+  if not reference_id:
+   with closing(db()) as c:review_queue.set_phase(c,job_id,"正在检索 AVSubtitles 日语参考字幕（网络请求可能较慢）")
+   reference_id=review_auto_reference(p)
   if not reference_id:
    with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","未找到可验证的日语参考字幕；请上传参考字幕后重试")
    return
@@ -367,6 +369,7 @@ def review_worker_one(job):
   offset=job["offset"];matched=job["matched"]
   suggestions=json.loads(job["suggestions"])
   if not isinstance(suggestions,list):raise ValueError("校对进度文件异常")
+  with closing(db()) as c:review_queue.set_phase(c,job_id,"参考字幕已就绪，准备 AI 校对")
   key,model,endpoint=ai_provider_settings.credentials(DATA)
   if not key:raise ValueError("请先在 AI 设置中配置 API Key")
   allowed=timeline.decode(raw).splitlines()
@@ -374,6 +377,7 @@ def review_worker_one(job):
    with closing(db()) as c:
     current=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
     if not current or current["status"]!="running":return
+   with closing(db()) as c:review_queue.set_phase(c,job_id,"正在校对第 "+str(offset+1)+" 条起的字幕")
    batch=subtitle_compare.review_batch(raw,ext,refs,offset=offset,max_cues=25)
    hits=sum(bool(x["references"]) for x in batch["rows"])
    new=subtitle_compare.ai_review(batch["rows"],key,model,endpoint,allowed) if hits else []
@@ -386,6 +390,7 @@ def review_worker_one(job):
   if not job["auto_apply"]:
    with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","校对完成，等待人工审核建议")
    return
+  with closing(db()) as c:review_queue.set_phase(c,job_id,"正在校验建议并准备备份保存")
   edits={};conflicts=set()
   for item in suggestions:
    before=item.get("before");after=item.get("after")
@@ -1280,10 +1285,8 @@ async function reviewQueue(){
  const panel=document.getElementById("reviewQueuePanel");
  panel.replaceChildren(el("p","正在读取 NAS 后台任务…"));
  try{
-  const [videos,jobs]=await Promise.all([
-   api("/api/videos?"+new URLSearchParams({status:"review"})),
-   api("/api/review/jobs")
-  ]);
+  const videos=await api("/api/videos?"+new URLSearchParams({status:"review"}));
+  const jobs=await api("/api/review/jobs");
   const items=videos.items||[];
   panel.replaceChildren(el("h3","NAS 后台校对队列 · 待审核影片 "+items.length+" 部"));
   const help=el("p","任务在 NAS 后台执行，关闭网页后继续；进度和建议保存在 /data/subtitle.db。自动检索日语参考字幕，逐批校对现有中文；不读取视频音频。");
@@ -1291,19 +1294,20 @@ async function reviewQueue(){
   const autoLabel=el("label");autoLabel.append(auto,document.createTextNode(" 校对完成后自动应用无冲突建议并备份（可选）"));
   const start=el("button","将全部待审核影片加入 NAS 队列");start.className="primary";
   const refresh=el("button","刷新任务状态");
-  const progress=el("p","后台任务可在关闭网页后继续运行。");
+  const progress=el("p","后台任务可在关闭网页后继续运行。");progress.setAttribute("role","status");
   const table=el("table");const head=el("thead");head.innerHTML="<tr><th>影片</th><th>状态与进度</th><th>操作</th></tr>";
   const body=el("tbody");table.append(head,body);
   const statusName={pending:"等待处理",running:"后台校对中",paused:"已暂停",reviewing:"等待人工审核",completed:"已完成",failed:"失败",cancelled:"已取消"};
   async function refreshJobs(){
    if(!document.getElementById("reviewQueuePanel")||!panel.isConnected)return;
+   progress.textContent="正在向 NAS 请求最新任务状态…";
    try{
     const data=await api("/api/review/jobs");
     body.replaceChildren();
     for(const j of data.items||[]){
      const tr=el("tr");const name=el("td",j.video_path.split("/").pop());
      name.title=j.video_path;
-     const state=el("td",(statusName[j.status]||j.status)+" · "+j.offset+"/"+(j.total||"?")+" 条 · 匹配 "+j.matched+" · 建议 "+j.suggestion_count+(j.changed?" · 已修改 "+j.changed:"")+(j.backup?" · 已备份":"")+(j.error?" · "+j.error:""));
+     const state=el("td",(statusName[j.status]||j.status)+" · "+j.offset+"/"+(j.total||"?")+" 条 · 匹配 "+j.matched+" · 建议 "+j.suggestion_count+(j.changed?" · 已修改 "+j.changed:"")+(j.backup?" · 已备份":"")+(j.phase?" · "+j.phase:"")+(j.error?" · "+j.error:""));
      const actions=el("td");
      const allowed=j.status==="running"||j.status==="pending"?["pause","cancel"]:j.status==="paused"?["resume","cancel"]:j.status==="failed"||j.status==="reviewing"||j.status==="cancelled"?["retry"]:[];
      for(const action of allowed){
@@ -1333,25 +1337,26 @@ async function reviewQueue(){
      };actions.append(open);
      tr.append(name,state,actions);body.append(tr);
     }
-    progress.textContent="NAS 后台任务 "+(data.items||[]).length+" 个 · "+new Date().toLocaleTimeString()+" 更新";
+    progress.textContent="已连接 NAS 队列接口 · "+(data.items||[]).length+" 个任务 · "+new Date().toLocaleTimeString()+" 更新";
+    if(!(data.items||[]).length)body.append(el("tr")).append(el("td","暂无任务，请点击上方批量入队按钮。")).colSpan=3;
    }catch(e){progress.textContent="队列刷新失败："+e.message}
   }
   start.onclick=async()=>{
    if(!items.length){progress.textContent="没有待审核影片";return}
    if(!confirm("把 "+items.length+" 部影片加入 NAS 后台队列。"+(auto.checked?"会自动备份并保存通过校验的字幕修改。":"只收集建议，不自动替换。")+" 是否继续？"))return;
-   start.disabled=true;
+   start.disabled=true;progress.textContent="正在将 "+items.length+" 部影片提交给 NAS 队列…";
    try{
     const result=await api("/api/review/jobs","POST",{paths:items.map(x=>x.path),auto_apply:auto.checked});
-    progress.textContent="已添加 "+result.created+" 个后台任务；现在可以关闭页面。";
     await refreshJobs();
+    progress.textContent="入队请求成功：新建 "+result.created+" 个任务，已存在 "+(items.length-result.created)+" 个；现在可以关闭页面。";
    }catch(e){progress.textContent="入队失败："+e.message}
    finally{start.disabled=false}
   };
-  refresh.onclick=refreshJobs;
+  refresh.onclick=async()=>{refresh.disabled=true;try{await refreshJobs()}finally{refresh.disabled=false}};
   panel.append(help,autoLabel,start,refresh,progress,table);
   await refreshJobs();
   window.reviewQueueTimer=setInterval(()=>{if(panel.isConnected&&!document.hidden)refreshJobs();else if(!panel.isConnected){clearInterval(window.reviewQueueTimer);window.reviewQueueTimer=null}},8000);
- }catch(e){panel.replaceChildren(el("p","NAS 队列加载失败："+e.message))}
+ }catch(e){panel.replaceChildren(el("p","NAS 队列加载失败："+e.message+"。请检查是否已更新容器、WEB_TOKEN 和 NAS 日志。"))}
 }
 async function show(path,tr){
  let prev=document.getElementById("activeCandidateRow");
