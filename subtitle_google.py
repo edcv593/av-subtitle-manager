@@ -47,7 +47,7 @@ def translate_srt(raw,offset=0,max_cues=15,translator=google_translate,sleep=tim
  if text is None:raise ValueError("无法解码日语字幕")
  if not isinstance(offset,int) or isinstance(offset,bool) or offset<0:raise ValueError("无效字幕偏移")
  if not isinstance(max_cues,int) or not 1<=max_cues<=30:raise ValueError("批次大小无效")
- blocks=re.split(r"(\\r?\\n[ \\t]*\\r?\\n)",text)
+ blocks=re.split(r"(\r?\n[ \t]*\r?\n)",text)
  entries=[];positions=[]
  for idx in range(0,len(blocks),2):
   block=blocks[idx]
