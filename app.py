@@ -1157,7 +1157,14 @@ async function show(path,tr){
      if(compareBusy)return;
      let ids=compareIds.slice();if(referenceId&&!ids.includes(referenceId))ids.unshift(referenceId);
      ids=ids.slice(0,3);
-     if(!ids.length){compareState.textContent="请先上传日语或其他中文字幕作为对照";return}
+     if(!ids.length){
+      compareState.textContent="正在自动查找 AVSubtitles 日语参考字幕…";
+      try{
+       let found=await api("/api/subtitles/reference/auto","POST",{path});
+       if(found.reference_id){ids=[found.reference_id];referenceId=found.reference_id;sessionStorage.setItem("subtitle_ref:"+path,referenceId);refInfo.textContent="已自动获取日语参考字幕："+referenceId}
+       else{compareState.textContent="自动获取参考字幕失败："+(found.errors||[]).join("；").slice(0,230)+"。可以在上方上传日语或其他中文参考字幕。";return}
+      }catch(e){compareState.textContent="参考字幕自动获取失败："+e.message+"；可改用上传参考字幕。";return}
+     }
      if(restart){compareOffset=0;compareSha=null;compareResults.replaceChildren();}
      if(!confirm("将本批中文字幕及匹配的参考字幕文本发送给已配置的 AI 校对服务。不会自动保存，确认？"))return;
      compareBusy=true;compareStart.disabled=true;compareNext.disabled=true;
