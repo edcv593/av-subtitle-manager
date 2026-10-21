@@ -11,6 +11,12 @@ class ProviderTests(unittest.TestCase):
   found,errors=indexed_pages("SSIS-334",lambda url,limit:rss)
   self.assertEqual(len(found["AVSubtitles"]),1)
   self.assertEqual(errors,{})
+ def test_avsubtitles_modern_detail_url(self):
+  rss=b'<rss><channel><item><title>Chinese subtitles for IPZZ-044</title><link>https://www.avsubtitles.com/movie11842/ipzz-044-example/subtitles/zh/32910</link></item></channel></rss>'
+  found,errors=indexed_pages("IPZZ-044",lambda url,limit:rss)
+  self.assertEqual(len(found["AVSubtitles"]),1)
+  self.assertEqual(errors,{})
+
  def test_avsubtitles_zip_link(self):
   page=b'<a href="/download_sub.php?subid=10845&amp;revid=1">SSIS-334-zh.zip</a>'
   links=detail_downloads("AVSubtitles","https://www.avsubtitles.com/subtitles.php?subid=10845",page)
