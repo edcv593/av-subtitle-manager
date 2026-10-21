@@ -37,6 +37,25 @@ class CompareTests(unittest.TestCase):
    out=sc.ai_review(rows,"key","deepseek-chat","https://api.deepseek.com/chat/completions",MAIN.decode().splitlines())
   self.assertEqual(len(out),1)
   self.assertEqual(out[0]["before"],"你为什么那么做？")
+ def test_empty_ai_message_has_actionable_error(self):
+  rows=sc.review_batch(MAIN,"srt",[("ja",JA,"srt",0)])["rows"]
+  response={"choices":[{"message":{"content":""},"finish_reason":"length"}]}
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self,n):return json.dumps(response).encode()
+  with patch.object(sc.urllib.request,"urlopen",return_value=Response()):
+   with self.assertRaisesRegex(ValueError,"空的校对内容"):
+    sc.ai_review(rows,"key","deepseek-chat","https://api.deepseek.com/chat/completions",MAIN.decode().splitlines())
+ def test_non_json_http_response_explained(self):
+  rows=sc.review_batch(MAIN,"srt",[("ja",JA,"srt",0)])["rows"]
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self,n):return b"<html>bad gateway</html>"
+  with patch.object(sc.urllib.request,"urlopen",return_value=Response()):
+   with self.assertRaisesRegex(ValueError,"非 JSON"):
+    sc.ai_review(rows,"key","deepseek-chat","https://api.deepseek.com/chat/completions",MAIN.decode().splitlines())
  def test_reject_duplicate_text_changes(self):
   rows=sc.review_batch(MAIN,"srt",[("ja",JA,"srt",0)])["rows"]
   response={"choices":[{"message":{"content":json.dumps({"suggestions":[{"index":0,"before":"你为什么那么做？","after":"你怎么这样？","reason":"测试"}]},ensure_ascii=False)}}]}
