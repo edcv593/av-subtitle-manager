@@ -136,9 +136,9 @@ def native_search(number,fetch_text,max_pages=5,source=None):
     if number not in {film_code(title),film_code(urllib.parse.unquote(parsed.path))}:
      if site!="AVSubtitles":continue
      # AVSubtitles often labels the detail anchor simply "Details".
-     escaped=re.escape(href)
-     matches=list(re.finditer(r"href=[\\\"\\\']"+escaped+r"[\\\"\\\']",raw.decode("utf-8","replace"),re.I))
-     if not any(number==film_code(re.sub(r"<[^>]+>"," ",raw.decode("utf-8","replace")[max(0,m.start()-350):m.start()])) for m in matches):continue
+     markup=raw.decode("utf-8","replace")
+     positions=[m.start() for m in re.finditer(re.escape(href),markup,re.I)]
+     if not any(number==film_code(re.sub(r"<[^>]+>"," ",markup[max(0,pos-350):pos])) for pos in positions):continue
     if target not in pages:pages.append(target)
     if len(pages)>=max_pages:break
   except Exception as exc:errors[site]=str(exc)[:160]
