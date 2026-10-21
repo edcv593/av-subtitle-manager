@@ -771,10 +771,11 @@ async function show(path,tr){
     let panel=el("div");panel.append(el("p","其他字幕来源（支持实验性自动搜索，也可人工检索）"));
     for(let [name,domain] of [["AVSubtitles","avsubtitles.com"],["Subtitle Cat","subtitlecat.com"],["JAV字幕","javzimu.com"]]){
      let a=el("a",name+" · 搜索 "+candidates.code);
-     a.href="https://www.google.com/search?"+new URLSearchParams({q:"site:"+domain+" "+candidates.code+" 中文字幕"});
+     a.href=name==="AVSubtitles"?"https://www.avsubtitles.com/search_results.php?"+new URLSearchParams({search:candidates.code}):name==="JAV字幕"?"https://javzimu.com/search/"+encodeURIComponent(candidates.code):name==="Subtitle Cat"?"https://www.subtitlecat.com/?"+new URLSearchParams({search:candidates.code}):"https://www.google.com/search?"+new URLSearchParams({q:"site:"+domain+" "+candidates.code});
      a.target="_blank";a.rel="noopener noreferrer";a.style.marginRight="16px";
      panel.append(a);
     }
+    panel.append(el("p","JAV字幕需要在新打开的网页里手动完成验证码；下载后使用下方「上传字幕 / ZIP」导入。AVSubtitles 的日语字幕可作为后续翻译参考，不能当作中文字幕直接覆盖。"));
     cell.append(panel);
    }
    let importBox=el("div");let urlInput=el("input");urlInput.placeholder="粘贴 HTTPS 字幕文件直链（.srt/.ass/.ssa/.vtt）";urlInput.style.width="65%";
