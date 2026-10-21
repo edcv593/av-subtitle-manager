@@ -10,6 +10,7 @@ import subtitle_files
 import subtitle_quality
 import external_providers
 import subtitle_optimizer
+import subtitle_google
 import ai_provider_settings
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
@@ -567,6 +568,116 @@ async def auto_reference_subtitle(request:Request):
      except Exception as exc:errors.append("下载或校验失败："+str(exc)[:100])
    except Exception as exc:errors.append("详情页读取失败："+str(exc)[:100])
   return {"reference_id":None,"details_found":len(detail_urls),"errors":errors[:12],"notice":"未能自动获取有效日语字幕；可能是网站超时、下载需要会话或没有可解析的链接"}
+
+def translation_draft_path(video_path,reference_id):
+ key=hashlib.sha256((str(video_path)+"|"+reference_id).encode()).hexdigest()
+ return DATA/"translation_drafts"/(key+".json")
+
+@app.post("/api/subtitles/translate/google")
+async def translate_google_batch(request:Request):
+ """Resume a bounded, text-only translation batch; never write to the media share."""
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
+  reference_id=body.get("reference_id","")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"当前免费翻译仅支持 SRT 日语参考字幕")
+  source=DATA/"reference_subtitles"/reference_id
+  if not source.is_file() or source.stat().st_size>LIMIT:raise HTTPException(404,"参考字幕不存在")
+  raw=source.read_bytes()
+  if hashlib.sha256(raw).hexdigest()!=reference_id.split(".")[0]:raise HTTPException(409,"参考字幕内容已变化")
+  if not timeline.cues(raw,"srt"):raise HTTPException(422,"参考字幕时间轴无效")
+  state_path=translation_draft_path(p,reference_id);state_path.parent.mkdir(parents=True,exist_ok=True)
+  restart=body.get("restart") is True
+  if state_path.exists() and not restart:
+   state=json.loads(state_path.read_text("utf-8"))
+   if state.get("reference_id")!=reference_id or state.get("source_sha256")!=hashlib.sha256(raw).hexdigest():raise HTTPException(409,"翻译源文件已变化")
+  else:
+   state={"reference_id":reference_id,"source_sha256":hashlib.sha256(raw).hexdigest(),"offset":0,"draft":timeline.decode(raw),"failures":[]}
+  if not isinstance(state.get("draft"),str) or len(state["draft"].encode("utf-8"))>LIMIT:raise HTTPException(409,"翻译草稿损坏")
+  if state["offset"]>=len(timeline.cues(raw,"srt")):
+   return {"done":True,"next_offset":state["offset"],"total":state["offset"],"failures":len(state["failures"]),"draft_sha256":subtitle_optimizer.digest(state["draft"].encode()),"notice":"初译已完成"}
+  try:
+   out=await asyncio.to_thread(subtitle_google.translate_srt,state["draft"].encode("utf-8"),state["offset"],10)
+   if timeline.cues(raw,"srt")!=timeline.cues(out["translated_text"].encode("utf-8"),"srt"):raise ValueError("时间轴发生变化")
+   state["draft"]=out["translated_text"];state["offset"]=out["next_offset"]
+   state["failures"].extend(out["failed"])
+   tmp=state_path.with_suffix(".tmp");tmp.write_text(json.dumps(state,ensure_ascii=False),"utf-8");tmp.replace(state_path)
+   return {"done":out["done"],"next_offset":out["next_offset"],"total":out["total"],"translated":len(out["changes"]),"failures":len(state["failures"]),"draft_sha256":subtitle_optimizer.digest(state["draft"].encode()),"notice":"Google 初译草稿已暂存，失败台词保留原日语"}
+  except (ValueError,OSError) as exc:raise HTTPException(502,str(exc)[:180])
+
+@app.post("/api/subtitles/translate/polish")
+async def translate_polish_batch(request:Request):
+ """AI suggestion batch for Google draft; proposals are never applied automatically."""
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  reference_id=body.get("reference_id","")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
+  state_path=translation_draft_path(p,reference_id)
+  if not state_path.is_file():raise HTTPException(404,"请先完成 Google 初译")
+  state=json.loads(state_path.read_text("utf-8"))
+  raw=state["draft"].encode("utf-8")
+  reference_path=DATA/"reference_subtitles"/reference_id
+  if not reference_path.is_file() or hashlib.sha256(reference_path.read_bytes()).hexdigest()!=state["source_sha256"]:raise HTTPException(409,"日语参考字幕已变化")
+  if state["offset"]<len(timeline.cues(reference_path.read_bytes(),"srt")):raise HTTPException(409,"请先完成所有 Google 翻译批次")
+  offset=body.get("offset",0)
+  if body.get("draft_sha256")!=subtitle_optimizer.digest(raw):raise HTTPException(409,"草稿已变化，请重新校对")
+  sample,next_offset,done=subtitle_optimizer.ai_batch(raw,offset)
+  if not sample:return {"suggestions":[],"next_offset":next_offset,"done":True}
+  key,model,endpoint=ai_provider_settings.credentials(DATA)
+  if not key:raise HTTPException(503,"请先在网页配置 DeepSeek API Key")
+  try:
+   reference=subtitle_optimizer.reference_for_window(raw,"srt",reference_path.read_bytes(),"srt",offset=offset)
+   suggestions=await asyncio.to_thread(subtitle_optimizer.ai_suggestions,raw,"srt",key,model,endpoint,reference,offset)
+   return {"suggestions":suggestions,"next_offset":next_offset,"done":done}
+  except Exception as exc:raise HTTPException(502,"AI 润色失败："+str(exc)[:150])
+
+@app.post("/api/subtitles/translate/preview")
+async def translate_preview(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  reference_id=body.get("reference_id","")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
+  state_path=translation_draft_path(p,reference_id)
+  if not state_path.is_file():raise HTTPException(404,"翻译草稿不存在")
+  state=json.loads(state_path.read_text("utf-8"))
+  original=(DATA/"reference_subtitles"/reference_id).read_bytes()
+  if hashlib.sha256(original).hexdigest()!=state["source_sha256"]:raise HTTPException(409,"原字幕已变化")
+  if state["offset"]<len(timeline.cues(original,"srt")):raise HTTPException(409,"翻译尚未完成")
+  raw=state["draft"].encode("utf-8")
+  try:
+   optimized,changes=subtitle_optimizer.optimize(raw,"srt",False,False,body.get("replacements",{}))
+   if timeline.cues(original,"srt")!=timeline.cues(optimized,"srt"):raise ValueError("时间轴发生变化")
+   return {"draft_sha256":subtitle_optimizer.digest(raw),"optimized_sha256":subtitle_optimizer.digest(optimized),"changes":changes[:60],"changed":len(changes),"failed":len(state["failures"]),"notice":"只预览，不会覆盖原字幕"}
+  except ValueError as exc:raise HTTPException(422,str(exc))
+
+@app.post("/api/subtitles/translate/save")
+async def translate_save(request:Request):
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  reference_id=body.get("reference_id","")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
+  state_path=translation_draft_path(p,reference_id)
+  if not state_path.is_file():raise HTTPException(404,"翻译草稿不存在")
+  state=json.loads(state_path.read_text("utf-8"))
+  original=(DATA/"reference_subtitles"/reference_id).read_bytes()
+  if hashlib.sha256(original).hexdigest()!=state["source_sha256"] or state["offset"]<len(timeline.cues(original,"srt")):raise HTTPException(409,"原字幕已变化或翻译尚未完成")
+  raw=state["draft"].encode("utf-8")
+  if subtitle_optimizer.digest(raw)!=body.get("draft_sha256"):raise HTTPException(409,"草稿已变化，请重新预览")
+  try:
+   optimized,_=subtitle_optimizer.optimize(raw,"srt",False,False,body.get("replacements",{}))
+   if subtitle_optimizer.digest(optimized)!=body.get("optimized_sha256"):raise ValueError("预览结果已变化")
+   if timeline.cues(original,"srt")!=timeline.cues(optimized,"srt"):raise ValueError("时间轴发生变化")
+   if not valid(optimized,"srt"):raise ValueError("生成的字幕格式无效")
+   target=p.with_name(p.stem+".zh.srt")
+   if target.exists():raise HTTPException(409,"中文字幕已存在，拒绝覆盖；请先审核已有字幕")
+   with target.open("xb") as f:f.write(optimized)
+   return {"ok":True,"file":target.name,"notice":"已生成独立中文字幕，未覆盖其他字幕"}
+  except HTTPException:raise
+  except (OSError,ValueError) as exc:raise HTTPException(422,str(exc)[:180])
 
 @app.post("/api/subtitles/optimize/ai")
 async def optimize_ai(request:Request):
