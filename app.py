@@ -142,7 +142,11 @@ def extract_uploaded_subtitle(data,filename,number):
  except (zipfile.BadZipFile,RuntimeError) as e:raise ValueError("ZIP 无法读取") from e
 def search(number):
  query=urllib.parse.urlencode({"gcid":"","cid":"","name":number})
- obj=json.loads(fetch(API+"?"+query).decode("utf-8-sig"))
+ raw=fetch(API+"?"+query)
+ if not raw.strip():raise ValueError("字幕搜索接口返回空响应（可能被拦截或暂时不可用）")
+ try:obj=json.loads(raw.decode("utf-8-sig"))
+ except (ValueError,UnicodeError) as exc:
+  raise ValueError("字幕搜索接口返回非 JSON 内容（可能是验证码或错误页面）") from exc
  if isinstance(obj,list):return obj
  if isinstance(obj,dict):
   for k in ("data","subtitles","result"):
@@ -372,7 +376,9 @@ def review_auto_reference(p):
       suffix=Path(urllib.parse.urlsplit(link).path).suffix.lower()
       filename="reference"+(suffix if suffix in SUB or suffix==".zip" else ".srt")
       data,ext=extract_uploaded_subtitle(payload,filename,number)
-      if not valid(data,ext) or not timeline.cues(data,ext):continue
+      if not valid(data,ext):continue
+      rows=subtitle_compare.entries(data,ext)
+      if len(rows)<3 or sum(bool(subtitle_compare.JAPANESE.search(x["text"])) for x in rows)/len(rows)<0.35:continue
       digest=hashlib.sha256(data).hexdigest()
       folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
       target=folder/(digest+"."+ext)
@@ -463,7 +469,7 @@ def review_worker_one(job):
   else:
    with closing(db()) as c:review_queue.set_phase(c,job_id,"日语字幕未找到，降级为中文文本校对（不推断日语对白）")
   # Stage 2: compare local and downloaded Chinese subtitle versions.
-  with closing(db()) as c:review_queue.set_phase(c,job_id,"日文字幕已获取，正在下载并比较最佳中文字幕")
+  with closing(db()) as c:review_queue.set_phase(c,job_id,"正在下载并比较最佳中文字幕"+("（已有日语参考）" if reference_raw is not None else "（缺少日语参考）"))
   base=review_best_chinese(p,reference_raw,reference_ext,job_id)
   if base is None:
    with closing(db()) as c:review_queue.finish(c,job_id,"reviewing","未找到与日语时间轴可靠匹配的中文字幕")
