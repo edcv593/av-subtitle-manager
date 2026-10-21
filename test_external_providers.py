@@ -105,6 +105,20 @@ class ProviderTests(unittest.TestCase):
  def test_reject_external_download(self):
   page=b'<a href="https://evil.example/sub.srt">Chinese (Simplified) Download</a>'
   self.assertEqual(detail_downloads("Subtitle Cat","https://www.subtitlecat.com/subs/1484/ROYD-329.html",page),[])
+ def test_subtitlecat_japanese_downloads(self):
+  from external_providers import subtitlecat_japanese_downloads
+  url="https://www.subtitlecat.com/subs/1398/IPZZ-841.html"
+  html=(b'<a href="/download/ja/123">Japanese Download</a>'
+        b'<a href="/download/zh-CN/123">Chinese Download</a>'
+        b'<a href="https://evil.example/download/ja/123">Japanese Download</a>')
+  self.assertEqual(subtitlecat_japanese_downloads(url,html),
+                   ["https://www.subtitlecat.com/download/ja/123"])
+ def test_subtitlecat_rejects_offsite_or_search_page(self):
+  from external_providers import subtitlecat_japanese_downloads
+  with self.assertRaises(ValueError):
+   subtitlecat_japanese_downloads("https://evil.example/subs/1/film.html",b"")
+  with self.assertRaises(ValueError):
+   subtitlecat_japanese_downloads("https://www.subtitlecat.com/?search=IPZZ-791",b"")
  def test_subtitle_cat_language(self):
   page=b'<a href="/download/zh-CN/123">Chinese (Simplified) Download</a>'
   self.assertEqual(len(detail_downloads("Subtitle Cat","https://www.subtitlecat.com/subs/1484/ROYD-329.html",page)),1)
