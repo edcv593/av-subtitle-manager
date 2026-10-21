@@ -693,7 +693,7 @@ async function show(path,tr){
      try{
       let out=await api("/api/subtitles/optimize/preview","POST",config());
       pending=out;result.replaceChildren(el("p","共修改 "+out.changed+" 行 · 时间轴："+(out.timeline_unchanged?"未改变":"异常")+" · "+(out.truncated?"仅显示前60条":"显示全部差异")));
-      for(let c of out.changes){let line=el("p","原文："+c.before+"\n优化："+c.after);line.style.whiteSpace="pre-wrap";result.append(line)}
+      for(let c of out.changes){let line=el("p","原文："+c.before+"\\n优化："+c.after);line.style.whiteSpace="pre-wrap";result.append(line)}
       if(!out.changed)result.append(el("p","没有需要修改的文字"));
       applyBtn.disabled=out.changed===0;
      }catch(e){result.replaceChildren(el("p","预览失败："+e.message))}
