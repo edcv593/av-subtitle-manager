@@ -495,6 +495,27 @@ async def test_ai_settings(request:Request):
    result=json.loads(resp.read(20000))
   return {"ok":bool(result.get("choices")),"message":"服务商返回有效响应" if result.get("choices") else "服务商未返回结果"}
  except Exception as exc:raise HTTPException(502,"连接测试失败："+str(exc)[:150])
+@app.post("/api/subtitles/reference/upload")
+async def upload_reference_subtitle(request:Request,path:str,filename:str):
+ auth(request)
+ with db() as c:
+  p=video(c,path)
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
+  if not filename or len(filename)>200 or Path(filename).suffix.lower() not in SUB:raise HTTPException(400,"仅支持 SRT/ASS/SSA/VTT 参考字幕")
+  ext=Path(filename).suffix.lower().lstrip(".")
+  chunks=[];total=0
+  async for chunk in request.stream():
+   total+=len(chunk)
+   if total>LIMIT:raise HTTPException(413,"参考字幕过大")
+   chunks.append(chunk)
+  raw=b"".join(chunks)
+  try:subtitle_optimizer.reference_excerpt(raw,ext)
+  except ValueError as exc:raise HTTPException(422,str(exc))
+  digest=hashlib.sha256(raw).hexdigest()
+  folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
+  target=folder/(digest+"."+ext)
+  if not target.exists():target.write_bytes(raw)
+  return {"id":digest+"."+ext,"filename":Path(filename).name,"size":len(raw),"notice":"参考字幕已暂存于 NAS 数据目录，不会替换现有中文字幕"}
 @app.post("/api/subtitles/optimize/ai")
 async def optimize_ai(request:Request):
  auth(request);body=await request.json()
@@ -507,7 +528,14 @@ async def optimize_ai(request:Request):
   key,model,endpoint=ai_provider_settings.credentials(DATA)
   if not key:raise HTTPException(503,"请先在网页 AI 设置中保存 API Key")
   try:
-   suggestions=subtitle_optimizer.ai_suggestions(target.read_bytes(),target.suffix.lower().lstrip("."),key,model,endpoint)
+   reference=None
+   reference_id=body.get("reference_id")
+   if reference_id:
+    if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
+    ref_path=DATA/"reference_subtitles"/reference_id
+    if not ref_path.is_file() or ref_path.stat().st_size>LIMIT:raise ValueError("参考字幕不存在或过大")
+    reference=subtitle_optimizer.reference_excerpt(ref_path.read_bytes(),ref_path.suffix.lstrip("."))
+   suggestions=await asyncio.to_thread(subtitle_optimizer.ai_suggestions,target.read_bytes(),target.suffix.lower().lstrip("."),key,model,endpoint,reference)
    return {"suggestions":suggestions,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
   except Exception as exc:raise HTTPException(502,"AI 建议失败："+str(exc)[:160])
 @app.post("/api/candidates/quality")
