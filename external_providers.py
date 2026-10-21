@@ -91,10 +91,14 @@ class SearchLinks(HTMLParser):
    self.links.append((self.href," ".join(self.parts).strip()))
    self.href=None;self.parts=[]
 
-def native_search(number,fetch_text,max_pages=5):
+def native_search(number,fetch_text,max_pages=5,source=None):
  """Search each provider's own HTML results, without Bing or fabricated matches."""
  found={};errors={};stats={}
- for source,make_url in SEARCH_ENDPOINTS.items():
+ if source is not None and source not in SEARCH_ENDPOINTS:raise ValueError("Unknown subtitle source")
+ for source_name,make_url in SEARCH_ENDPOINTS.items():
+  if source is not None and source!=source_name:continue
+  site=source_name
+  source=site
   url=make_url(number);pages=[];stats[source]={"search_url":url,"links_seen":0}
   try:
    raw=fetch_text(url,350000)
