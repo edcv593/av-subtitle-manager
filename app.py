@@ -75,6 +75,30 @@ def fetch_public_search(url,limit=250000):
    if not location:raise ValueError("Search redirect without Location")
    url=urllib.parse.urljoin(url,location)
  raise ValueError("Too many search redirects")
+def fetch_site_search(url,limit=350000):
+ """Site search only: allow a short HTTPS redirect chain within the same domain."""
+ origin=urllib.parse.urlsplit(url).hostname
+ allowed={"www.avsubtitles.com","avsubtitles.com","www.subtitlecat.com","subtitlecat.com","www.javzimu.com","javzimu.com"}
+ if origin not in allowed:raise ValueError("Unknown subtitle search site")
+ for _ in range(4):
+  u=urllib.parse.urlsplit(url)
+  if u.scheme!="https" or u.hostname not in allowed or u.hostname.removeprefix("www.")!=origin.removeprefix("www.") or u.username or u.password or u.port not in (None,443):
+   raise ValueError("Subtitle search redirect rejected")
+  addresses=socket.getaddrinfo(u.hostname,443,type=socket.SOCK_STREAM)
+  if not addresses or any(not ipaddress.ip_address(x[4][0]).is_global for x in addresses):
+   raise ValueError("Search destination is not public")
+  headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36","Accept":"text/html,application/xhtml+xml;q=0.9,*/*;q=0.8","Accept-Language":"zh-CN,zh;q=0.9,en;q=0.7"}
+  try:
+   with urllib.request.build_opener(NoRedirect()).open(urllib.request.Request(url,headers=headers),timeout=20) as resp:
+    data=resp.read(limit+1)
+    if len(data)>limit:raise ValueError("Search page too large")
+    return data
+  except urllib.error.HTTPError as exc:
+   if exc.code not in (301,302,303,307,308):raise
+   location=exc.headers.get("Location")
+   if not location:raise ValueError("Search redirect without Location")
+   url=urllib.parse.urljoin(url,location)
+ raise ValueError("Too many site redirects")
 def candidate_payload(url,limit=LIMIT):
  if url.startswith("local-subtitle://"):
   digest=url[len("local-subtitle://"):]
@@ -317,7 +341,7 @@ async def discover_external(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")));number=code(p.name)
   if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
-  pages,errors=external_providers.indexed_pages(number,fetch_public_search)
+  pages,errors,search_stats=external_providers.native_search(number,fetch_site_search)
   imported=[];seen=set();stats={k:{"pages":len(v),"download_links":0,"downloaded":0,"accepted":0,"rejected":0} for k,v in pages.items()}
   for source,urls in pages.items():
    for page_url in urls[:3]:
@@ -351,7 +375,7 @@ async def discover_external(request:Request):
       except (OSError,ValueError,zipfile.BadZipFile) as exc:errors[source]=str(exc)[:140]
     except (OSError,ValueError) as exc:errors[source]=str(exc)[:140]
   c.commit()
-  return {"items":imported,"errors":errors,"stats":stats,"pages":{k:len(v) for k,v in pages.items()}}
+  return {"items":imported,"errors":errors,"stats":stats,"search_stats":search_stats,"pages":{k:len(v) for k,v in pages.items()}}
 @app.post("/api/candidates/upload")
 async def upload_candidate(request:Request,path:str,filename:str):
  auth(request)
