@@ -528,6 +528,9 @@ async def optimize_ai(request:Request):
   key,model,endpoint=ai_provider_settings.credentials(DATA)
   if not key:raise HTTPException(503,"请先在网页 AI 设置中保存 API Key")
   try:
+   offset=body.get("offset",0)
+   batch,next_offset,done=subtitle_optimizer.ai_batch(target.read_bytes(),offset)
+   if done and not batch:return {"suggestions":[],"next_offset":next_offset,"done":True,"notice":"已完成全部批次"}
    reference=None
    reference_id=body.get("reference_id")
    if reference_id:
@@ -535,8 +538,8 @@ async def optimize_ai(request:Request):
     ref_path=DATA/"reference_subtitles"/reference_id
     if not ref_path.is_file() or ref_path.stat().st_size>LIMIT:raise ValueError("参考字幕不存在或过大")
     reference=subtitle_optimizer.reference_for_window(target.read_bytes(),target.suffix.lower().lstrip("."),ref_path.read_bytes(),ref_path.suffix.lstrip("."))
-   suggestions=await asyncio.to_thread(subtitle_optimizer.ai_suggestions,target.read_bytes(),target.suffix.lower().lstrip("."),key,model,endpoint,reference)
-   return {"suggestions":suggestions,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
+   suggestions=await asyncio.to_thread(subtitle_optimizer.ai_suggestions,target.read_bytes(),target.suffix.lower().lstrip("."),key,model,endpoint,reference,offset)
+   return {"suggestions":suggestions,"next_offset":next_offset,"done":done,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
   except Exception as exc:raise HTTPException(502,"AI 建议失败："+str(exc)[:160])
 @app.post("/api/candidates/quality")
 async def candidate_quality(request:Request):
