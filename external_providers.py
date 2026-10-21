@@ -125,6 +125,22 @@ def avsubtitles_reference_pages(number,raw,max_items=12):
   if len(results)>=max_items:break
  return results
 
+def avsubtitles_reference_downloads(url,page,max_links=8):
+ """Extract explicit download links from a verified Japanese AVSubtitles detail page."""
+ parsed=urllib.parse.urlsplit(url)
+ if parsed.scheme!="https" or parsed.hostname not in ("avsubtitles.com","www.avsubtitles.com") or not re.fullmatch(r"/movie[0-9]+/[^/?#]+/subtitles/ja/[0-9]+/?",parsed.path,re.I):
+  raise ValueError("不是 AVSubtitles 日语字幕详情页")
+ parser=Links();parser.feed(page.decode("utf-8","replace"))
+ links=[]
+ for href,label in parser.links:
+  target=urllib.parse.urljoin(url,html.unescape(href))
+  dest=urllib.parse.urlsplit(target)
+  if dest.scheme!="https" or dest.hostname not in ("avsubtitles.com","www.avsubtitles.com") or dest.username or dest.password:continue
+  if not (dest.path.lower().endswith((".srt",".ass",".ssa",".vtt",".zip")) or dest.path.lower().endswith("/download_sub.php") or ("/download" in dest.path.lower() and re.search(r"download|srt|zip|字幕",label,re.I))):continue
+  if target not in links:links.append(target)
+  if len(links)>=max_links:break
+ return links
+
 def native_search(number,fetch_text,max_pages=5,source=None):
  """Search each provider's own HTML results, without Bing or fabricated matches."""
  found={};errors={};stats={}
