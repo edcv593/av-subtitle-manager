@@ -516,6 +516,58 @@ async def upload_reference_subtitle(request:Request,path:str,filename:str):
   target=folder/(digest+"."+ext)
   if not target.exists():target.write_bytes(raw)
   return {"id":digest+"."+ext,"filename":Path(filename).name,"size":len(raw),"notice":"参考字幕已暂存于 NAS 数据目录，不会替换现有中文字幕"}
+@app.post("/api/subtitles/reference/auto")
+async def auto_reference_subtitle(request:Request):
+ """Search public AVSubtitles pages and save a verified Japanese reference, never touching video."""
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
+  number=code(p.name)
+  if not number:raise HTTPException(400,"无法识别影片番号")
+  detail_urls=[];errors=[]
+  try:
+   search_url=external_providers.SEARCH_ENDPOINTS["AVSubtitles"](number)
+   raw=await asyncio.to_thread(fetch_site_search,search_url,350000)
+   detail_urls=external_providers.avsubtitles_reference_pages(number,raw)
+   # Film pages may list Japanese subtitle records one level deeper.
+   if not detail_urls:
+    pages,_,_=await asyncio.to_thread(external_providers.native_search,number,fetch_site_search,source="AVSubtitles")
+    for page_url in pages.get("AVSubtitles",[])[:3]:
+     try:
+      html=await asyncio.to_thread(fetch_site_search,page_url,350000)
+      detail_urls.extend(external_providers.avsubtitles_reference_pages(number,html))
+     except Exception as exc:errors.append("影片页面："+str(exc)[:100])
+  except Exception as exc:errors.append("搜索失败："+str(exc)[:120])
+  # A user-provided known detail URL may be used without guessing or crawling arbitrary hosts.
+  supplied=body.get("detail_url")
+  if supplied:
+   u=urllib.parse.urlsplit(str(supplied))
+   if u.scheme!="https" or u.hostname not in ("avsubtitles.com","www.avsubtitles.com") or u.username or u.password or not re.fullmatch(r"/movie[0-9]+/[^/?#]+/subtitles/ja/[0-9]+/?",u.path,re.I) or external_providers.film_code(u.path)!=number:
+    raise HTTPException(400,"日语参考字幕详情页与影片番号不匹配")
+   detail_urls.insert(0,str(supplied))
+  detail_urls=list(dict.fromkeys(detail_urls))[:8]
+  for detail_url in detail_urls:
+   try:
+    html=await asyncio.to_thread(fetch_site_search,detail_url,350000)
+    links=external_providers.avsubtitles_reference_downloads(detail_url,html)
+    if not links:errors.append("详情页未提供可解析的下载链接："+detail_url.rsplit("/",1)[-1])
+    for link in links[:5]:
+     try:
+      raw=await asyncio.to_thread(fetch_site_search,link,LIMIT)
+      suffix=Path(urllib.parse.urlsplit(link).path).suffix.lower()
+      filename="reference"+(suffix if suffix in SUB or suffix==".zip" else ".zip" if zipfile.is_zipfile(io.BytesIO(raw)) else ".srt")
+      data,ext=extract_uploaded_subtitle(raw,filename,number)
+      if not valid(data,ext) or not timeline.cues(data,ext):raise ValueError("下载内容不是有效字幕")
+      digest=hashlib.sha256(data).hexdigest()
+      folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
+      target=folder/(digest+"."+ext)
+      if not target.exists():target.write_bytes(data)
+      return {"reference_id":target.name,"detail_url":detail_url,"download_url":link,"errors":errors,"notice":"日语参考字幕已自动保存；不会替换中文字幕"}
+     except Exception as exc:errors.append("下载或校验失败："+str(exc)[:100])
+   except Exception as exc:errors.append("详情页读取失败："+str(exc)[:100])
+  return {"reference_id":None,"details_found":len(detail_urls),"errors":errors[:12],"notice":"未能自动获取有效日语字幕；可能是网站超时、下载需要会话或没有可解析的链接"}
+
 @app.post("/api/subtitles/optimize/ai")
 async def optimize_ai(request:Request):
  auth(request);body=await request.json()
