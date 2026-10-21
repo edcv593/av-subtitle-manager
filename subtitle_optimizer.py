@@ -120,11 +120,24 @@ def reference_for_window(raw,ext,reference_raw,reference_ext,max_chars=6000):
   if times and any(a<=window_end and b>=window_start for a,b in times):selected.append(line)
  return "\n".join(selected)[:max_chars]
 
-def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.openai.com/v1/chat/completions",reference=None):
+def ai_batch(raw,offset=0,max_chars=12000):
+ """Return a complete-line text window and next offset, without touching source bytes."""
+ text=raw.decode("utf-8-sig","replace")
+ if not isinstance(offset,int) or isinstance(offset,bool) or offset<0 or offset>len(text):raise ValueError("AI 批次偏移无效")
+ if offset and text[offset-1]!="\n":raise ValueError("AI 批次必须从完整行开始")
+ if offset==len(text):return "",offset,True
+ end=min(len(text),offset+max_chars)
+ if end<len(text):
+  boundary=text.rfind("\n",offset,end)
+  if boundary<offset:raise ValueError("字幕单行过长，无法安全分批")
+  end=boundary+1
+ return text[offset:end],end,end==len(text)
+
+def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.openai.com/v1/chat/completions",reference=None,offset=0):
  """Optional external text-only suggestions. Never automatically edits files."""
  if not api_key:raise ValueError("未配置字幕润色 API Key")
  # Collect text from the subtitle using a deliberately bounded window.
- sample=raw.decode("utf-8-sig","replace")[:12000]
+ sample,_,_=ai_batch(raw,offset)
  prompt=("你是中文字幕编辑。优先依据带时间戳的原语言参考字幕对照现有中文；仅在能够合理对齐时建议更准确、更通顺的简体中文；"
          "无法从字幕文本验证真实场景或原语言准确性，不要臆造。"
          "只输出JSON对象，格式为{\"suggestions\":[{\"before\":\"原文\",\"after\":\"建议\"}]}。"
@@ -136,7 +149,7 @@ def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.ope
  body=json.loads(answer["choices"][0]["message"]["content"])
  suggestions=body.get("suggestions",[])
  if not isinstance(suggestions,list):raise ValueError("AI 响应格式错误")
- valid_lines=set(raw.decode("utf-8-sig","replace").splitlines())
+ valid_lines=set(sample.splitlines())
  result=[]
  for item in suggestions[:10]:
   if not isinstance(item,dict):continue
