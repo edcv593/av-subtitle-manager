@@ -1270,13 +1270,13 @@ async function show(path,tr){
        }
        compareSave(ids);
        if(out.done){
-        sessionStorage.removeItem(compareStorage);
         compareState.textContent="整片校对完成！共 "+compareTotal+" 条，匹配 "+compareMatched+" 条，得到 "+compareCount+" 条建议。";
         if(compareAutoSave.checked){
          compareState.textContent+=" 正在验证并自动备份保存…";
          let edits={};let conflict=new Set();
          for(let item of compareSuggestions){
           if(typeof item.before!=="string"||typeof item.after!=="string"||!item.before||!item.after||item.before===item.after)continue;
+          if(!/[\u4e00-\u9fff]/.test(item.after)||/[\u3040-\u30ff]/.test(item.after))continue;
           if(Object.prototype.hasOwnProperty.call(edits,item.before)&&edits[item.before]!==item.after)conflict.add(item.before);
           else edits[item.before]=item.after;
          }
@@ -1292,6 +1292,7 @@ async function show(path,tr){
          compareState.textContent="自动校对并保存成功：修改 "+saved.changed+" 行，原字幕备份 "+saved.backup+"；跳过冲突建议 "+conflict.size+" 条。";
          pending=null;applyBtn.disabled=true;
         }else compareState.textContent+=" 请逐条勾选并预览保存。";
+        sessionStorage.removeItem(compareStorage);
         break
        }
        if(out.next_offset<=request.offset)throw Error("校对进度没有前进，已停止以避免无限循环");
