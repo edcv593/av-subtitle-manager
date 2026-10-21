@@ -1123,65 +1123,6 @@ async function show(path,tr){
     }catch(e){msg("上传失败："+e.message);uploadBtn.disabled=false}
    };
    uploadBox.append(uploadInput,uploadBtn);cell.append(uploadBox);
-   let translatePanel=el("div");translatePanel.style.border="1px solid #d7dee8";translatePanel.style.padding="12px";translatePanel.style.margin="12px 0";
-   let translateBtn=el("button","一键日语初译 + DeepSeek 润色");
-   let translateStatus=el("p","实验性免费 Google 翻译：可能限流或失效；仅发送字幕文本。生成前需预览确认。");
-   let translateResults=el("div");let translateSave=el("button","预览并生成中文字幕");translateSave.disabled=true;
-   translatePanel.append(translateBtn,translateStatus,translateResults,translateSave);cell.append(translatePanel);
-   let translateRef=null,translateDigest=null,translateReplacements={},translateReady=false;
-   translateBtn.onclick=async()=>{
-    if(!confirm("将日语字幕文本发送给非官方 Google 翻译接口，初译后发送至已配置的 AI 服务润色。可能产生 AI 费用，且需要较长时间。确认继续？"))return;
-    translateBtn.disabled=true;translateSave.disabled=true;translateResults.replaceChildren();translateReplacements={};translateReady=false;
-    try{
-     translateStatus.textContent="正在自动寻找日语参考字幕…";
-     let found=await api("/api/subtitles/reference/auto","POST",{path});
-     if(!found.reference_id)throw Error("无法自动下载日语参考字幕："+(found.errors||[]).join("；").slice(0,200));
-     if(!found.reference_id.endsWith(".srt"))throw Error("免费翻译目前仅支持日语 SRT，请先使用 SRT 参考字幕");
-     translateRef=found.reference_id;
-     let rounds=0,translated;
-     while(true){
-      translateStatus.textContent="Google 翻译中："+(translated?translated.next_offset+"/"+translated.total:"准备中")+" 条…";
-      translated=await api("/api/subtitles/translate/google","POST",{path,reference_id:translateRef});
-      rounds++;
-      if(translated.done)break;
-      if(rounds>300)throw Error("达到安全批次上限");
-     }
-     translateDigest=translated.draft_sha256;
-     translateStatus.textContent="初译完成，失败台词 "+translated.failures+" 条；开始 DeepSeek 校对…";
-     let offset=0,aiRounds=0,polishError=null;
-     while(true){
-      let out;
-      try{out=await api("/api/subtitles/translate/polish","POST",{path,reference_id:translateRef,draft_sha256:translateDigest,offset})}
-      catch(e){polishError=e.message;break}
-      for(let suggestion of out.suggestions){
-       let line=el("div");let check=el("input");check.type="checkbox";
-       check.onchange=()=>{if(check.checked)translateReplacements[suggestion.before]=suggestion.after;else delete translateReplacements[suggestion.before]};
-       line.append(check,document.createTextNode(" "+suggestion.before+" → "+suggestion.after));translateResults.append(line);
-      }
-      offset=out.next_offset;aiRounds++;
-      translateStatus.textContent="AI 润色中："+aiRounds+" 批，初译失败 "+translated.failures+" 条";
-      if(out.done)break;
-      if(aiRounds>100)throw Error("达到 AI 安全批次上限");
-     }
-     translateReady=true;translateSave.disabled=false;
-     translateStatus.textContent=polishError?"Google 初译已完成；AI 不可用："+polishError+"。可直接预览初译结果。":"翻译与润色建议已完成。勾选建议，再预览并生成中文字幕。";
-    }catch(e){translateStatus.textContent="翻译暂停："+e.message+"；再次点击可重新执行"}
-    finally{translateBtn.disabled=false}
-   };
-   translateSave.onclick=async()=>{
-    if(!translateReady||!translateRef||!translateDigest)return;
-    translateSave.disabled=true;
-    try{
-     let config={path,reference_id:translateRef,replacements:translateReplacements};
-     let preview=await api("/api/subtitles/translate/preview","POST",config);
-     if(preview.draft_sha256!==translateDigest)throw Error("翻译草稿已变化");
-     translateResults.append(el("pre","生成字幕预览（前2500字符）：\\n"+preview.sample));
-     if(!confirm("已在页面显示字幕预览；AI 建议修改 "+preview.changed+" 行，Google 初译失败 "+preview.failed+" 条（失败行保留日语）。确认创建独立 .zh.srt？若已存在中文字幕，将拒绝覆盖。"))return;
-     let saved=await api("/api/subtitles/translate/save","POST",{...config,draft_sha256:preview.draft_sha256,optimized_sha256:preview.optimized_sha256});
-     msg("已生成："+saved.file);await render();
-    }catch(e){translateStatus.textContent="保存失败："+e.message}
-    finally{translateSave.disabled=false}
-   };
    let discover=el("button","自动搜索三个字幕网站");
    let progressPanel=el("div");progressPanel.style.margin="12px 0";progressPanel.style.whiteSpace="pre-wrap";
    let progressTitle=el("p","点击自动搜索后，将逐站显示检索进度及结果。");
