@@ -76,3 +76,41 @@ def translate_srt(raw,offset=0,max_cues=15,translator=google_translate,sleep=tim
   blocks[idx]="".join(lines)
  next_offset=min(len(entries),offset+max_cues)
  return {"translated_text":"".join(blocks),"changes":changes,"failed":failed,"next_offset":next_offset,"total":len(entries),"done":next_offset==len(entries)}
+
+def retry_failed_srt(draft_raw,source_raw,failures,max_cues=2,translator=google_translate,sleep=time.sleep):
+ """Retry failed cue lines only, preserving already translated text and timestamps."""
+ import timeline
+ draft=timeline.decode(draft_raw);original=timeline.decode(source_raw)
+ if draft is None or original is None:raise ValueError("字幕编码无效")
+ split_pattern=r"(\r?\n[ \t]*\r?\n)"
+ db=re.split(split_pattern,draft);sb=re.split(split_pattern,original)
+ if len(db)!=len(sb):raise ValueError("草稿与原字幕结构不同")
+ positions=[]
+ for i in range(0,len(sb),2):
+  if timeline.cues(sb[i].encode("utf-8"),"srt"):positions.append(i)
+ unique=sorted({int(f["cue"]) for f in failures if isinstance(f,dict) and isinstance(f.get("cue"),int) and 1<=f["cue"]<=len(positions)})
+ if not unique:return {"translated_text":draft,"resolved":[],"remaining":[],"attempted":0}
+ selected=set(unique[:max_cues]);remaining=[f for f in failures if f.get("cue") not in selected]
+ resolved=[];retry_errors=[]
+ for cue in unique[:max_cues]:
+  idx=positions[cue-1]
+  src_lines=sb[idx].splitlines(keepends=True);dst_lines=db[idx].splitlines(keepends=True)
+  if len(src_lines)!=len(dst_lines):raise ValueError("字幕条目行数已变化")
+  timing=next((j for j,line in enumerate(src_lines) if "-->" in line),None)
+  if timing is None:continue
+  had_error=False
+  for j in range(timing+1,len(src_lines)):
+   original_line=src_lines[j].rstrip("\r\n")
+   current_line=dst_lines[j].rstrip("\r\n")
+   if not original_line.strip() or current_line!=original_line:continue
+   try:
+    translated=translator(original_line)
+    if not isinstance(translated,str) or not translated.strip() or "\n" in translated or "\r" in translated:raise ValueError("无效译文")
+    dst_lines[j]=translated+dst_lines[j][len(current_line):]
+   except Exception as exc:
+    had_error=True
+    retry_errors.append({"cue":cue,"reason":str(exc)[:120]})
+   sleep(MIN_INTERVAL)
+  db[idx]="".join(dst_lines)
+  if not had_error:resolved.append(cue)
+ return {"translated_text":"".join(db),"resolved":resolved,"remaining":remaining+retry_errors,"attempted":len(selected)}
