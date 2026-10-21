@@ -703,7 +703,7 @@ async def optimize_ai(request:Request):
    reference=None
    reference_id=body.get("reference_id")
    if reference_id:
-    if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
+    if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
     ref_path=DATA/"reference_subtitles"/reference_id
     if not ref_path.is_file() or ref_path.stat().st_size>LIMIT:raise ValueError("参考字幕不存在或过大")
     reference=subtitle_optimizer.reference_for_window(target.read_bytes(),target.suffix.lower().lstrip("."),ref_path.read_bytes(),ref_path.suffix.lstrip("."),offset=offset)
