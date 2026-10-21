@@ -55,6 +55,18 @@ class ReviewQueueTests(unittest.TestCase):
   self.assertEqual(rq.list_jobs(self.c)[0]["phase"],"已保存本批进度")
   rq.finish(self.c,row["id"],"completed")
   self.assertEqual(rq.list_jobs(self.c)[0]["phase"],"")
+ def test_missing_japanese_legacy_job_retries_after_restart(self):
+  row,_=rq.enqueue(self.c,"/media/a.mp4")
+  rq.claim(self.c)
+  rq.finish(self.c,row["id"],"reviewing","未找到可验证的日语参考字幕；请上传参考字幕后重试")
+  rq.recover(self.c)
+  self.assertEqual(rq.claim(self.c)["id"],row["id"])
+ def test_unrelated_reviewing_job_is_not_retried(self):
+  row,_=rq.enqueue(self.c,"/media/a.mp4")
+  rq.claim(self.c)
+  rq.finish(self.c,row["id"],"reviewing","未找到与日语时间轴可靠匹配的中文字幕")
+  rq.recover(self.c)
+  self.assertIsNone(rq.claim(self.c))
  def test_existing_schema_is_migrated(self):
   self.c.execute("DROP TABLE review_jobs")
   self.c.execute("""CREATE TABLE review_jobs(
