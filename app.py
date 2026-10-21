@@ -1338,7 +1338,7 @@ async function reviewQueue(){
      tr.append(name,state,actions);body.append(tr);
     }
     progress.textContent="已连接 NAS 队列接口 · "+(data.items||[]).length+" 个任务 · "+new Date().toLocaleTimeString()+" 更新";
-    if(!(data.items||[]).length)body.append(el("tr")).append(el("td","暂无任务，请点击上方批量入队按钮。")).colSpan=3;
+    if(!(data.items||[]).length){const emptyRow=el("tr"),emptyCell=el("td","暂无任务，请点击上方批量入队按钮。");emptyCell.colSpan=3;emptyRow.append(emptyCell);body.append(emptyRow)}
    }catch(e){progress.textContent="队列刷新失败："+e.message}
   }
   start.onclick=async()=>{
