@@ -1001,33 +1001,57 @@ async function show(path,tr){
     let autoStatus=el("p","自动流程不会覆盖原字幕；AI 建议需人工勾选并预览保存。");
     panel.append(autoBtn,autoStatus);
     let googleBtn=el("button","Google 免费初译 → DeepSeek 润色");
-    let googleStatus=el("p","优先使用上方已上传的日语 SRT；没有上传时才尝试 AVSubtitles 自动获取。");
+    let googlePause=el("button","暂停（本批结束后）");googlePause.disabled=true;
+    let googleStatus=el("p","优先使用已上传的日语 SRT；没有上传时才尝试 AVSubtitles。");
+    let googleProgress=el("progress");googleProgress.max=100;googleProgress.value=0;googleProgress.style.width="100%";
+    let googleProgressDetail=el("p","未开始");googleProgressDetail.className="muted";
     let googleSuggestions=el("div");let googlePreview=el("button","预览并生成独立中文字幕");googlePreview.disabled=true;
-    panel.append(googleBtn,googleStatus,googleSuggestions,googlePreview);
-    let googleRef=null,googleHash=null,googleEdits={},googleDone=false;
+    panel.append(googleBtn,googlePause,googleStatus,googleProgress,googleProgressDetail,googleSuggestions,googlePreview);
+    let googleRef=null,googleHash=null,googleEdits={},googleDone=false,googlePaused=false,googleBusy=false,googleTicker=null;
+    const googleProgressUpdate=(done,total,failed,phase,startedAt)=>{
+     googleProgress.max=Math.max(1,total||1);googleProgress.value=done||0;
+     let sec=Math.floor((Date.now()-startedAt)/1000);
+     googleProgressDetail.textContent=(done||0)+"/"+(total||"?")+" 条 · "+(total?Math.floor(done/total*100):0)+"% · 失败 "+(failed||0)+" 条 · 本次耗时 "+sec+" 秒 · "+phase;
+    };
+    googlePause.onclick=()=>{googlePaused=true;googlePause.disabled=true;googleStatus.textContent="暂停已请求，等待当前字幕批次完成后停止。草稿会保留。"};
     googleBtn.onclick=async()=>{
-     if(!confirm("将日语字幕文本发送到非官方 Google 翻译接口，并使用已配置的 DeepSeek 进行润色（可能产生费用）。确认？"))return;
-     googleBtn.disabled=true;googlePreview.disabled=true;googleDone=false;googleEdits={};googleSuggestions.replaceChildren();
+     if(googleBusy)return;
+     if(!confirm("将日语字幕文本发送到非官方 Google 翻译接口，并使用已配置的 DeepSeek 润色（可能产生费用）。确认？"))return;
+     googleBusy=true;googlePaused=false;googleBtn.disabled=true;googlePause.disabled=false;googlePreview.disabled=true;googleDone=false;googleEdits={};googleSuggestions.replaceChildren();
+     let startedAt=Date.now(),progress={next_offset:0,total:0,failures:0};
+     let phase="连接字幕服务";
+     googleTicker=setInterval(()=>googleProgressUpdate(progress.next_offset,progress.total,progress.failures,phase,startedAt),1000);
      try{
-      googleRef=referenceId;
+      googleRef=referenceId||googleRef;
       if(!googleRef){
-       googleStatus.textContent="正在尝试从 AVSubtitles 获取日语参考字幕…";
+       phase="AVSubtitles 网络请求中";googleStatus.textContent="正在获取日语字幕…";
        let found=await api("/api/subtitles/reference/auto","POST",{path});
-       if(!found.reference_id)throw Error("AVSubtitles 未能自动获取："+(found.errors||[]).join("；").slice(0,250)+"。可先在上方上传日语 SRT。");
-       googleRef=found.reference_id;referenceId=googleRef;
-       refInfo.textContent="自动获取日语参考字幕："+googleRef;
+       if(!found.reference_id)throw Error("AVSubtitles 未能自动获取："+(found.errors||[]).join("；").slice(0,250)+"。请先上传日语 SRT。");
+       googleRef=found.reference_id;referenceId=googleRef;refInfo.textContent="日语参考字幕："+googleRef;
       }
-      if(!googleRef.endsWith(".srt"))throw Error("目前 Google 初译仅支持 SRT 格式日语参考字幕");
-      let batch,round=0;
-      do{
-       googleStatus.textContent="Google 初译中："+(batch?batch.next_offset+"/"+batch.total:"准备中")+" 条…";
+      if(!googleRef.endsWith(".srt"))throw Error("Google 初译目前仅支持日语 SRT");
+      progress=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});
+      googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"读取已保存进度",startedAt);
+      if(progress.done){googleStatus.textContent="已找到完成的翻译草稿，正在获取结果…";}
+      let batch=null,round=0;
+      while(!progress.done){
+       if(googlePaused){googleStatus.textContent="已暂停；"+progress.next_offset+"/"+progress.total+" 条已保存。点击「继续翻译」可恢复。";googleBtn.textContent="继续翻译";return}
+       phase="Google 请求中（单批最多 2 条，等待网络响应）";
+       googleStatus.textContent="Google 初译：正在处理第 "+(progress.next_offset+1)+"–"+Math.min(progress.next_offset+2,progress.total)+" 条…";
        batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
-       if(++round>300)throw Error("达到翻译安全批次上限");
-      }while(!batch.done);
-      googleHash=batch.draft_sha256;
-      googleStatus.textContent="Google 初译完成；失败 "+batch.failures+" 条（保留日语）。开始 DeepSeek 润色…";
+       progress={next_offset:batch.next_offset,total:batch.total,failures:batch.failures,done:batch.done};
+       googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"批次已保存",startedAt);
+       if(++round>10000)throw Error("达到翻译批次安全上限");
+      }
+      if(!batch)batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
+      googleHash=batch.draft_sha256;googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"Google 初译完成",startedAt);
+      googlePause.disabled=true;
+      if(googlePaused){googleStatus.textContent="Google 初译已保存。再次点击继续进入 AI 润色。";googleBtn.textContent="继续润色";return}
+      googleStatus.textContent="初译完成，失败 "+batch.failures+" 条（保留日语）；DeepSeek 润色开始…";
       let offset=0,roundAI=0,polishError="";
       while(true){
+       if(googlePaused){googleStatus.textContent="AI 校对已暂停；初译草稿仍保留，再次执行可恢复翻译并重新开始 AI 建议。";googleBtn.textContent="继续翻译";return}
+       phase="DeepSeek 处理第 "+(roundAI+1)+" 批";
        let out;
        try{out=await api("/api/subtitles/translate/polish","POST",{path,reference_id:googleRef,draft_sha256:googleHash,offset})}
        catch(e){polishError=e.message;break}
@@ -1037,14 +1061,19 @@ async function show(path,tr){
         line.append(check,document.createTextNode(" "+suggestion.before+" → "+suggestion.after));googleSuggestions.append(line);
        }
        offset=out.next_offset;
-       googleStatus.textContent="DeepSeek 润色："+(++roundAI)+" 批；Google 初译失败 "+batch.failures+" 条";
+       googleStatus.textContent="DeepSeek 润色完成 "+(++roundAI)+" 批 · Google 初译失败 "+batch.failures+" 条";
        if(out.done)break;
        if(roundAI>100)throw Error("AI 批次达到安全上限");
       }
-      googleDone=true;googlePreview.disabled=false;
-      googleStatus.textContent=polishError?"Google 初译完成，DeepSeek 暂不可用："+polishError+"；可以预览初译。":"初译与 AI 润色建议已就绪。请勾选建议并预览保存。";
-     }catch(e){googleStatus.textContent="翻译暂停："+e.message}
-     finally{googleBtn.disabled=false}
+      googleDone=true;googlePreview.disabled=false;phase="已完成，等待审核";
+      googleStatus.textContent=polishError?"Google 初译完成，AI 不可用："+polishError+"；可预览初译。":"翻译与 AI 建议已就绪。勾选建议后预览保存。";
+      googleBtn.textContent="重新检查翻译";
+     }catch(e){googleStatus.textContent="翻译中断："+e.message+"；已完成的批次已保存，可点击继续。";googleBtn.textContent="继续翻译"}
+     finally{
+      if(googleTicker)clearInterval(googleTicker);googleTicker=null;
+      googleProgressUpdate(progress.next_offset,progress.total,progress.failures,googlePaused?"已暂停":phase,startedAt);
+      googleBusy=false;googleBtn.disabled=false;googlePause.disabled=true;
+     }
     };
     googlePreview.onclick=async()=>{
      if(!googleDone)return;
