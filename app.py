@@ -53,6 +53,28 @@ def fetch(url,limit=2097152):
   data=resp.read(limit+1)
   if len(data)>limit:raise ValueError("Subtitle too large")
   return data
+def fetch_public_search(url,limit=250000):
+ """Only allow a bounded redirect chain among approved public Bing HTTPS hosts."""
+ allowed={"www.bing.com","bing.com","cn.bing.com"}
+ for _ in range(4):
+  u=urllib.parse.urlsplit(url)
+  if u.scheme!="https" or u.hostname not in allowed or u.username or u.password or u.port not in (None,443):
+   raise ValueError("Search redirect destination rejected")
+  addresses=socket.getaddrinfo(u.hostname,443,type=socket.SOCK_STREAM)
+  if not addresses or any(not ipaddress.ip_address(x[4][0]).is_global for x in addresses):
+   raise ValueError("Search destination is not public")
+  req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0 (compatible; AVSubtitleManager/1.0)","Accept":"application/rss+xml, application/xml;q=0.9, */*;q=0.5"})
+  try:
+   with urllib.request.build_opener(NoRedirect()).open(req,timeout=20) as resp:
+    data=resp.read(limit+1)
+    if len(data)>limit:raise ValueError("Search response too large")
+    return data
+  except urllib.error.HTTPError as exc:
+   if exc.code not in (301,302,303,307,308):raise
+   location=exc.headers.get("Location")
+   if not location:raise ValueError("Search redirect without Location")
+   url=urllib.parse.urljoin(url,location)
+ raise ValueError("Too many search redirects")
 def candidate_payload(url,limit=LIMIT):
  if url.startswith("local-subtitle://"):
   digest=url[len("local-subtitle://"):]
@@ -295,7 +317,7 @@ async def discover_external(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")));number=code(p.name)
   if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
-  pages,errors=external_providers.indexed_pages(number,fetch)
+  pages,errors=external_providers.indexed_pages(number,fetch_public_search)
   imported=[];seen=set();stats={k:{"pages":len(v),"download_links":0,"downloaded":0,"accepted":0,"rejected":0} for k,v in pages.items()}
   for source,urls in pages.items():
    for page_url in urls[:3]:
