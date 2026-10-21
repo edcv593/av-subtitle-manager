@@ -92,54 +92,62 @@ def review_batch(primary_raw,primary_ext,refs,offset=0,max_cues=25):
  return {"rows":rows,"next_offset":next_offset,"done":next_offset>=len(source),"total":len(source)}
 
 def ai_review(rows,api_key,model,endpoint,allowed_lines):
- """AI outputs audited suggestions only. Exact original text and unique-line checks."""
+ """Small evidence batches avoid output truncation; retry length-truncated responses with smaller groups."""
  if not api_key:raise ValueError("请先配置 DeepSeek API Key")
  evidence=[r for r in rows if r["references"] and r["chinese"]]
  if not evidence:return []
- prompt=("你是中文字幕校对员。已存在简体中文字幕，禁止整片重译。"
-         "仅依据时间轴匹配的日语或其他中文参考提供有根据的纠错建议；"
-         "不能确认原文含义、参考相互冲突或对齐不可靠时保留原译。"
-         "只返回 JSON 对象 {\"suggestions\":[{\"index\":0,\"before\":\"完整原字幕\",\"after\":\"完整建议\",\"reason\":\"依据\"}]}，"
-         "最多10条。不改变时间戳，不合并不同条目。\n字幕和证据：\n"+
-         json.dumps(evidence,ensure_ascii=False))
- body=json.dumps({"model":model,"messages":[{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.2,"max_tokens":1800}).encode("utf-8")
- req=urllib.request.Request(endpoint,data=body,headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
- try:
-  with urllib.request.urlopen(req,timeout=45) as resp:
-   raw=resp.read(120000)
- except urllib.error.HTTPError as exc:
-  if exc.code==401:raise ValueError("AI API Key 无效（HTTP 401）") from None
-  if exc.code==402:raise ValueError("AI 账户额度不足（HTTP 402）") from None
-  if exc.code==429:raise ValueError("AI 请求被限流（HTTP 429），请稍后重试") from None
-  raise ValueError("AI 服务返回 HTTP "+str(exc.code)) from None
- except (urllib.error.URLError,TimeoutError) as exc:
-  raise ValueError("AI 服务网络连接或请求超时："+str(exc)[:100]) from None
- if not raw.strip():raise ValueError("AI 服务返回空 HTTP 响应，请检查 API 地址和代理配置")
- try:response=json.loads(raw)
- except (ValueError,UnicodeError) as exc:raise ValueError("AI 服务返回非 JSON 内容，请检查 API 地址和服务商配置") from exc
- if not isinstance(response,dict) or not isinstance(response.get("choices"),list) or not response["choices"]:
-  raise ValueError("AI 服务响应缺少 choices，请检查模型是否支持聊天接口")
- choice=response["choices"][0]
- content=choice.get("message",{}).get("content") if isinstance(choice,dict) else None
- if not isinstance(content,str) or not content.strip():
-  reason=choice.get("finish_reason","unknown") if isinstance(choice,dict) else "unknown"
-  raise ValueError("AI 返回空的校对内容（finish_reason="+str(reason)[:40]+"）；可能是模型未输出正文或输出长度不足")
- content=content.strip()
- if content.startswith("```"):
-  content=re.sub(r"^```(?:json)?\s*|\s*```$","",content,flags=re.I).strip()
- try:parsed=json.loads(content)
- except ValueError as exc:raise ValueError("AI 校对正文不是有效 JSON，建议更换模型或增加输出额度") from exc
- if not isinstance(parsed,dict):raise ValueError("AI 校对结果必须是 JSON 对象")
- items=parsed.get("suggestions",[])
- if not isinstance(items,list):raise ValueError("AI 建议列表格式无效")
+ def one(group,depth=0):
+  compact=[{"index":r["index"],"chinese":r["chinese"][:250],"references":[{"text":x["text"][:300],"source":x["source"]} for x in r["references"][:2]]} for r in group]
+  prompt=("校对已有简体中文字幕，不要整片重译。只修改确有日语或其他中文参考依据的明显错误；"
+          "无法确认就不建议。仅输出 JSON：{\"suggestions\":[{\"index\":0,\"before\":\"原文\",\"after\":\"建议\",\"reason\":\"理由\"}]}。"
+          "最多返回3条，不需要额外说明。参考数据："+json.dumps(compact,ensure_ascii=False))
+  payload={"model":model,"messages":[{"role":"user","content":prompt}],
+           "response_format":{"type":"json_object"},"temperature":0.2,"max_tokens":3500}
+  req=urllib.request.Request(endpoint,data=json.dumps(payload,ensure_ascii=False).encode("utf-8"),
+    headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
+  try:
+   with urllib.request.urlopen(req,timeout=60) as resp:raw=resp.read(120000)
+  except urllib.error.HTTPError as exc:
+   if exc.code==401:raise ValueError("AI API Key 无效（HTTP 401）") from None
+   if exc.code==402:raise ValueError("AI 账户额度不足（HTTP 402）") from None
+   if exc.code==429:raise ValueError("AI 请求被限流（HTTP 429），请稍后重试") from None
+   raise ValueError("AI 服务返回 HTTP "+str(exc.code)) from None
+  except (urllib.error.URLError,TimeoutError) as exc:
+   raise ValueError("AI 服务网络连接或请求超时："+str(exc)[:100]) from None
+  if not raw.strip():raise ValueError("AI 服务返回空 HTTP 响应，请检查 API 地址和代理配置")
+  try:response=json.loads(raw)
+  except (ValueError,UnicodeError) as exc:raise ValueError("AI 服务返回非 JSON 内容，请检查 API 地址和服务商配置") from exc
+  choices=response.get("choices") if isinstance(response,dict) else None
+  if not isinstance(choices,list) or not choices:raise ValueError("AI 服务响应缺少 choices")
+  choice=choices[0]
+  if not isinstance(choice,dict):raise ValueError("AI 响应格式无效")
+  message=choice.get("message") or {}
+  content=message.get("content") if isinstance(message,dict) else None
+  finish=choice.get("finish_reason")
+  if finish=="length":
+   if len(group)>1 and depth<4:
+    mid=len(group)//2
+    return one(group[:mid],depth+1)+one(group[mid:],depth+1)
+   raise ValueError("AI 单条校对仍超出输出长度，请更换非推理模型或检查 max_tokens 配置")
+  if not isinstance(content,str) or not content.strip():
+   raise ValueError("AI 返回空的校对内容（finish_reason="+str(finish)+"）；请检查模型和输出限制")
+  content=content.strip()
+  if content.startswith("```"):content=re.sub(r"^`{3}(?:json)?\\s*|\\s*`{3}$","",content,flags=re.I).strip()
+  try:parsed=json.loads(content)
+  except ValueError as exc:raise ValueError("AI 校对正文不是有效 JSON，请检查模型响应") from exc
+  if not isinstance(parsed,dict) or not isinstance(parsed.get("suggestions",[]),list):raise ValueError("AI 建议列表格式无效")
+  return parsed["suggestions"]
+ raw_suggestions=[]
+ for pos in range(0,len(evidence),5):
+  raw_suggestions.extend(one(evidence[pos:pos+5]))
  lookup={r["index"]:r for r in evidence}
  result=[];seen=set()
- for item in items[:10]:
+ for item in raw_suggestions:
   if not isinstance(item,dict) or not isinstance(item.get("index"),int):continue
   row=lookup.get(item["index"]);before=item.get("before");after=item.get("after");reason=item.get("reason","")
   if not row or row["index"] in seen or before!=row["chinese"] or allowed_lines.count(before)!=1:continue
-  if not isinstance(after,str) or not after.strip() or after==before or len(after)>1000 or "\n" in after or "\r" in after:continue
+  if not isinstance(after,str) or not after.strip() or after==before or len(after)>1000 or "\\n" in after or "\\r" in after:continue
   if not isinstance(reason,str) or not reason.strip():continue
   seen.add(row["index"])
   result.append({"index":row["index"],"before":before,"after":after,"reason":reason[:240],"references":row["references"]})
- return result
+ return result[:10]
