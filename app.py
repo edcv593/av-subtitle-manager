@@ -543,7 +543,7 @@ async def auto_reference_subtitle(request:Request):
   supplied=body.get("detail_url")
   if supplied:
    u=urllib.parse.urlsplit(str(supplied))
-   if u.scheme!="https" or u.hostname not in ("avsubtitles.com","www.avsubtitles.com") or u.username or u.password or not re.fullmatch(r"/movie[0-9]+/[^/?#]+/subtitles/ja/[0-9]+/?",u.path,re.I) or external_providers.film_code(u.path)!=number:
+   if u.scheme!="https" or u.hostname not in ("avsubtitles.com","www.avsubtitles.com") or u.username or u.password or not re.fullmatch(r"/movie[0-9]+/[^/?#]+/subtitles/ja/[0-9]+/?",u.path,re.I) or number not in {(m.group(1)+"-"+m.group(2)).upper() for m in external_providers.CODE_RE.finditer(urllib.parse.unquote(u.path.split("/")[2]))}:
     raise HTTPException(400,"日语参考字幕详情页与影片番号不匹配")
    detail_urls.insert(0,str(supplied))
   detail_urls=list(dict.fromkeys(detail_urls))[:8]
