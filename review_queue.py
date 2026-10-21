@@ -109,4 +109,8 @@ def retry_legacy_subtitle_selection(c,paths):
 def recover(c):
  # An interrupted running batch can be retried safely from its last checkpoint.
  c.execute("UPDATE review_jobs SET status='pending',updated=? WHERE status='running'",(time.time(),))
+ # Earlier versions blocked jobs when Japanese references were unavailable.
+ # The Chinese-only fallback can now process these jobs without manual uploads.
+ c.execute("""UPDATE review_jobs SET status='pending',error='',phase='',updated=?
+              WHERE status='reviewing' AND error LIKE '未找到可验证的日语参考字幕%'""",(time.time(),))
  c.commit()
