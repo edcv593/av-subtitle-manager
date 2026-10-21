@@ -954,7 +954,7 @@ async def ai_transition(job_id:int,request:Request):
 @app.get("/",response_class=HTMLResponse)
 def home():
  return HTML
-HTML="""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AV Subtitle Manager</title><style>body{font:15px system-ui;background:#f4f6fa;color:#182434;margin:0}.wrap{max-width:1100px;margin:30px auto;padding:0 16px}h1{font-size:25px}.panel{background:white;border:1px solid #e3e7ed;border-radius:12px;padding:20px;margin:14px 0}button,input,select{padding:9px;border:1px solid #ccd3df;border-radius:7px;font:inherit}button{cursor:pointer}.primary{background:#2263dc;color:white;border-color:#2263dc}.workflow-progress{padding:12px;margin:6px 0;background:#eaf0ff;border-radius:9px;font-size:13px}details>summary{cursor:pointer;font-weight:600;padding:5px 0}input{min-width:180px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:11px;border-bottom:1px solid #e8ebf0;word-break:break-all}.muted{color:#667}#message{margin:10px 0;color:#345}button{margin:3px}.grid{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#f3f6fb;padding:14px;border-radius:9px;min-width:100px}</style><div class="wrap"><h1>AV Subtitle Manager</h1><div class="panel"><input id="token" type="password" placeholder="输入 WEB_TOKEN"><button onclick="connect()">连接</button><button onclick="scan()">立即扫描</button><p class="muted">仅供局域网使用，令牌保存在浏览器当前会话。</p><div id="message"></div></div><details class="panel"><summary>设置 · AI 服务与密钥</summary><h2>AI 接口设置</h2><p class="muted">API Key 仅保存在 NAS 的 /data 目录，页面不会回显密钥。配置修改无需重启容器。</p><label>服务商 <select id="aiProvider"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option></select></label> <label>模型 <input id="aiModel" value="deepseek-flash"></label> <label>API Key <input id="aiKey" type="password" autocomplete="new-password" placeholder="留空表示保留已保存的密钥"></label><button onclick="saveAiSettings()">保存 AI 设置</button><button onclick="testAiSettings()">测试连接</button><button onclick="clearAiKey()">清除密钥</button><p id="aiSettingsStatus" class="muted">连接后读取配置</p></details><div class="panel"><div class="grid" id="stats"></div></div><div class="panel"><input id="q" placeholder="番号或文件名"><select id="status"><option value="">全部</option><option value="downloaded">已下载</option><option value="existing">已有字幕</option><option value="embedded">内嵌中文字幕</option><option value="skipped_c">-C 跳过</option><option value="missing">未找到</option><option value="review">待审核/时间轴疑似不匹配</option><option value="error">失败</option></select><button onclick="load()">查询</button><table><thead><tr><th>影片</th><th>番号</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table><div id="candidates"></div></div><details class="panel"><summary>高级功能 · 外部 AI Worker 任务队列</summary><h2>AI 字幕任务队列</h2><p class="muted">只记录任务，不提取音频、不运行语音识别。默认关闭自动入队和 Worker。</p><button onclick="aiLoad()">刷新 AI 任务</button><select id="aiStatus"><option value="">全部</option><option value="pending">等待处理</option><option value="paused">已暂停</option><option value="reviewing">待审核</option><option value="failed">失败</option><option value="cancelled">已取消</option><option value="completed">已完成</option></select><table><thead><tr><th>影片</th><th>来源</th><th>状态</th><th>操作</th></tr></thead><tbody id="aiRows"></tbody></table></details></div><script>
+HTML="""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AV Subtitle Manager</title><style>body{font:15px system-ui;background:#f4f6fa;color:#182434;margin:0}.wrap{max-width:1100px;margin:30px auto;padding:0 16px}h1{font-size:25px}.panel{background:white;border:1px solid #e3e7ed;border-radius:12px;padding:20px;margin:14px 0}button,input,select{padding:9px;border:1px solid #ccd3df;border-radius:7px;font:inherit}button{cursor:pointer}.primary{background:#2263dc;color:white;border-color:#2263dc}.workflow-progress{padding:12px;margin:6px 0;background:#eaf0ff;border-radius:9px;font-size:13px}details>summary{cursor:pointer;font-weight:600;padding:5px 0}input{min-width:180px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:11px;border-bottom:1px solid #e8ebf0;word-break:break-all}.muted{color:#667}#message{margin:10px 0;color:#345}button{margin:3px}.grid{display:flex;gap:12px;flex-wrap:wrap}.stat{background:#f3f6fb;padding:14px;border-radius:9px;min-width:100px}</style><div class="wrap"><h1>AV Subtitle Manager</h1><div class="panel"><input id="token" type="password" placeholder="输入 WEB_TOKEN"><button onclick="connect()">连接</button><button onclick="scan()">立即扫描</button><p class="muted">仅供局域网使用，令牌保存在浏览器当前会话。</p><div id="message"></div></div><details class="panel"><summary>设置 · AI 服务与密钥</summary><h2>AI 接口设置</h2><p class="muted">API Key 仅保存在 NAS 的 /data 目录，页面不会回显密钥。配置修改无需重启容器。</p><label>服务商 <select id="aiProvider"><option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option></select></label> <label>模型 <input id="aiModel" value="deepseek-flash"></label> <label>API Key <input id="aiKey" type="password" autocomplete="new-password" placeholder="留空表示保留已保存的密钥"></label><button onclick="saveAiSettings()">保存 AI 设置</button><button onclick="testAiSettings()">测试连接</button><button onclick="clearAiKey()">清除密钥</button><p id="aiSettingsStatus" class="muted">连接后读取配置</p><hr><h3>DeepL 初译 API</h3><label>账户类型 <select id="deeplPlan"><option value="free">API Free</option><option value="pro">API Pro</option></select></label> <label>DeepL API Key <input id="deeplKey" type="password" autocomplete="new-password" placeholder="不输入则保留原密钥"></label><button onclick="saveDeeplSettings()">保存 DeepL</button><button onclick="testDeeplSettings()">测试 DeepL</button><button onclick="clearDeeplKey()">清除 DeepL Key</button><p id="deeplSettingsStatus" class="muted">尚未读取 DeepL 配置</p></details><div class="panel"><div class="grid" id="stats"></div></div><div class="panel"><input id="q" placeholder="番号或文件名"><select id="status"><option value="">全部</option><option value="downloaded">已下载</option><option value="existing">已有字幕</option><option value="embedded">内嵌中文字幕</option><option value="skipped_c">-C 跳过</option><option value="missing">未找到</option><option value="review">待审核/时间轴疑似不匹配</option><option value="error">失败</option></select><button onclick="load()">查询</button><table><thead><tr><th>影片</th><th>番号</th><th>状态</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table><div id="candidates"></div></div><details class="panel"><summary>高级功能 · 外部 AI Worker 任务队列</summary><h2>AI 字幕任务队列</h2><p class="muted">只记录任务，不提取音频、不运行语音识别。默认关闭自动入队和 Worker。</p><button onclick="aiLoad()">刷新 AI 任务</button><select id="aiStatus"><option value="">全部</option><option value="pending">等待处理</option><option value="paused">已暂停</option><option value="reviewing">待审核</option><option value="failed">失败</option><option value="cancelled">已取消</option><option value="completed">已完成</option></select><table><thead><tr><th>影片</th><th>来源</th><th>状态</th><th>操作</th></tr></thead><tbody id="aiRows"></tbody></table></details></div><script>
 let token=sessionStorage.getItem("subtitle_token")||"";document.getElementById("token").value=token;
 function el(tag,text){let e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e}
 function msg(t){document.getElementById("message").textContent=t}
@@ -964,7 +964,11 @@ document.getElementById("aiProvider").onchange=()=>{let p=document.getElementByI
 async function saveAiSettings(){try{let v=await api("/api/settings/ai","POST",{provider:document.getElementById("aiProvider").value,model:document.getElementById("aiModel").value,api_key:document.getElementById("aiKey").value});document.getElementById("aiKey").value="";document.getElementById("aiSettingsStatus").textContent=v.has_key?"设置已保存，密钥已隐藏":"设置已保存，尚未配置密钥"}catch(e){msg("保存 AI 设置失败："+e.message)}}
 async function testAiSettings(){document.getElementById("aiSettingsStatus").textContent="正在连接 AI 服务商…";try{let v=await api("/api/settings/ai/test","POST",{});document.getElementById("aiSettingsStatus").textContent=v.message}catch(e){document.getElementById("aiSettingsStatus").textContent=e.message}}
 async function clearAiKey(){if(!confirm("确定清除服务器保存的 AI API Key？"))return;try{await api("/api/settings/ai","POST",{provider:document.getElementById("aiProvider").value,model:document.getElementById("aiModel").value,clear_key:true});await loadAiSettings()}catch(e){msg(e.message)}}
-function connect(){token=document.getElementById("token").value;sessionStorage.setItem("subtitle_token",token);load();loadAiSettings()}
+async function loadDeeplSettings(){try{let v=await api("/api/settings/deepl");document.getElementById("deeplPlan").value=v.plan;document.getElementById("deeplSettingsStatus").textContent=v.has_key?"DeepL Key 已保存（不回显）":"尚未保存 DeepL Key"}catch(e){document.getElementById("deeplSettingsStatus").textContent="读取 DeepL 配置失败："+e.message}}
+async function saveDeeplSettings(){try{let v=await api("/api/settings/deepl","POST",{plan:document.getElementById("deeplPlan").value,api_key:document.getElementById("deeplKey").value});document.getElementById("deeplKey").value="";document.getElementById("deeplSettingsStatus").textContent=v.has_key?"DeepL 配置已保存":"DeepL Key 尚未配置"}catch(e){document.getElementById("deeplSettingsStatus").textContent="保存失败："+e.message}}
+async function testDeeplSettings(){try{document.getElementById("deeplSettingsStatus").textContent="正在连接 DeepL…";let r=await api("/api/settings/deepl/test","POST",{});document.getElementById("deeplSettingsStatus").textContent=r.message}catch(e){document.getElementById("deeplSettingsStatus").textContent=e.message}}
+async function clearDeeplKey(){if(!confirm("确定清除 DeepL API Key？"))return;try{await api("/api/settings/deepl","POST",{plan:document.getElementById("deeplPlan").value,clear_key:true});loadDeeplSettings()}catch(e){msg(e.message)}}
+function connect(){token=document.getElementById("token").value;sessionStorage.setItem("subtitle_token",token);load();loadAiSettings();loadDeeplSettings()}
 async function load(){try{let q=document.getElementById("q").value,status=document.getElementById("status").value;let [s,v]=await Promise.all([api("/api/status"),api("/api/videos?"+new URLSearchParams({q,status}))]);let stats=document.getElementById("stats");stats.replaceChildren();for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}let tbody=document.getElementById("rows");tbody.replaceChildren();for(let x of v.items){let tr=el("tr");let name=el("td",x.path.split("/").pop());name.title=x.path+"\\n"+x.detail;let code=el("td",x.code||"—");let status=el("td",x.status);let actions=el("td");let b=el("button","一键处理");b.className="primary";b.onclick=()=>runWorkflow(x.path,tr,b);actions.append(b);tr.append(name,code,status,actions);tbody.append(tr)}let last=sessionStorage.getItem("subtitle_active_video");if(last&&!document.getElementById("activeCandidateRow")){let row=Array.from(tbody.rows).find(row=>row.cells[0]&&row.cells[0].title.split("\\n")[0]===last);if(row)show(last,row)}msg(scanInfo(s))}catch(e){msg("刷新失败："+e.message)}}
 function scanInfo(s){
  let p=s.scan_progress||{},now=Date.now()/1000;
@@ -1074,7 +1078,10 @@ async function show(path,tr){
     let autoBtn=el("button","一键获取日语参考并整片 AI 校对");
     let autoStatus=el("p","自动流程不会覆盖原字幕；AI 建议需人工勾选并预览保存。");
     panel.append(autoBtn,autoStatus);
-    let googleBtn=el("button","Google 免费初译 → DeepSeek 润色");
+    let translationEngine=el("select");for(let [value,label] of [["google","Google 免费翻译（实验性）"],["deepl","DeepL API（Free / Pro）"]]){let opt=el("option",label);opt.value=value;translationEngine.append(opt)}
+    translationEngine.value=sessionStorage.getItem("subtitle_engine:"+path)||"google";
+    translationEngine.onchange=()=>{sessionStorage.setItem("subtitle_engine:"+path,translationEngine.value);googleStatus.textContent="已切换初译引擎；翻译进度按引擎分别保存。点击开始或继续翻译。"};
+    let googleBtn=el("button","开始初译 → DeepSeek 润色");
     let googlePause=el("button","暂停（本批结束后）");googlePause.disabled=true;
     let googleStatus=el("p","优先使用已上传的日语 SRT；没有上传时才尝试 AVSubtitles。");
     let googleProgress=el("progress");googleProgress.max=100;googleProgress.value=0;googleProgress.style.width="100%";
@@ -1082,7 +1089,7 @@ async function show(path,tr){
     let googleSuggestions=el("div");let googlePreview=el("button","预览并生成独立中文字幕");googlePreview.disabled=true;
     let googleRetry=el("button","重试翻译失败的条目");googleRetry.disabled=true;
     let googleErrors=el("div");googleErrors.style.whiteSpace="pre-wrap";
-    panel.append(googleBtn,googlePause,googleStatus,googleProgress,googleProgressDetail,googleRetry,googleErrors,googleSuggestions,googlePreview);
+    panel.append(el("span","初译引擎："),translationEngine,googleBtn,googlePause,googleStatus,googleProgress,googleProgressDetail,googleRetry,googleErrors,googleSuggestions,googlePreview);
     let googleRef=null,googleHash=null,googleEdits={},googleDone=false,googlePaused=false,googleBusy=false,googleTicker=null;
     const googleProgressUpdate=(done,total,failed,phase,startedAt)=>{
      googleProgress.max=Math.max(1,total||1);googleProgress.value=done||0;
@@ -1103,17 +1110,17 @@ async function show(path,tr){
      if(googleBusy||!referenceId)return;
      googleBusy=true;googleRetry.disabled=true;googlePreview.disabled=true;
      try{
-      let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId});
+      let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId,provider:translationEngine.value});
       if(!v.failures)return;
-      if(!confirm("将重试 "+v.failures+" 条失败字幕，每批 2 条。Google 免费接口可能继续限流；再次失败会停止，避免重复请求。确认？"))return;
+      if(!confirm("将重试 "+v.failures+" 条失败字幕，每批 2 条。翻译 API 可能继续限流；再次失败会停止，避免重复请求。确认？"))return;
       let rounds=0,remaining=v.failures;
       while(remaining>0){
        googleStatus.textContent="正在重试失败条目 · 剩余 "+remaining+" 条…";
-       let out=await api("/api/subtitles/translate/retry-failed","POST",{path,reference_id:referenceId});
+       let out=await api("/api/subtitles/translate/retry-failed","POST",{path,reference_id:referenceId,provider:translationEngine.value});
        remaining=out.remaining;rounds++;
        if(!out.retried||!out.resolved||rounds>=100)break;
       }
-      v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId});
+      v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId,provider:translationEngine.value});
       googleShowErrors(v);googleProgress.value=v.next_offset;
       googleProgressDetail.textContent="NAS 草稿 "+v.next_offset+"/"+v.total+" 条 · 失败 "+v.failures+" 条";
       googleStatus.textContent=v.failures?"重试结束，仍有 "+v.failures+" 条失败。可稍后继续重试。":"失败条目已清零；可点击继续翻译和 DeepSeek 校对。";
@@ -1124,7 +1131,7 @@ async function show(path,tr){
     googlePause.onclick=()=>{googlePaused=true;googlePause.disabled=true;googleStatus.textContent="暂停已请求，等待当前字幕批次完成后停止。草稿会保留。"};
     googleBtn.onclick=async()=>{
      if(googleBusy)return;
-     if(!confirm("将日语字幕文本发送到非官方 Google 翻译接口，并使用已配置的 DeepSeek 润色（可能产生费用）。确认？"))return;
+     if(!confirm("将日语字幕文本发送到所选翻译引擎，并使用已配置的 DeepSeek 润色（可能产生费用）。确认？"))return;
      googleBusy=true;googlePaused=false;googleBtn.disabled=true;googlePause.disabled=false;googlePreview.disabled=true;googleDone=false;googleEdits={};googleSuggestions.replaceChildren();
      let startedAt=Date.now(),progress={next_offset:0,total:0,failures:0};
      let phase="连接字幕服务";
@@ -1137,34 +1144,34 @@ async function show(path,tr){
        if(!found.reference_id)throw Error("AVSubtitles 未能自动获取："+(found.errors||[]).join("；").slice(0,250)+"。请先上传日语 SRT。");
        googleRef=found.reference_id;referenceId=googleRef;sessionStorage.setItem("subtitle_ref:"+path,googleRef);refInfo.textContent="日语参考字幕："+googleRef;
       }
-      if(!googleRef.endsWith(".srt"))throw Error("Google 初译目前仅支持日语 SRT");
-      progress=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});
+      if(!googleRef.endsWith(".srt"))throw Error("字幕初译目前仅支持日语 SRT");
+      progress=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef,provider:translationEngine.value});
       googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"读取已保存进度",startedAt);
       googleShowErrors(progress);
       if(progress.done){googleStatus.textContent="已找到完成的翻译草稿，正在获取结果…";}
       let batch=null,round=0,emptyBatches=0;
       while(!progress.done){
        if(googlePaused){googleStatus.textContent="已暂停；"+progress.next_offset+"/"+progress.total+" 条已保存。点击「继续翻译」可恢复。";googleBtn.textContent="继续翻译";return}
-       phase="Google 请求中（单批最多 2 条，等待网络响应）";
-       googleStatus.textContent="Google 初译：正在处理第 "+(progress.next_offset+1)+"–"+Math.min(progress.next_offset+2,progress.total)+" 条…";
-       batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
+       phase="初译 API 请求中（单批最多 2 条）";
+       googleStatus.textContent="字幕初译：正在处理第 "+(progress.next_offset+1)+"–"+Math.min(progress.next_offset+2,progress.total)+" 条…";
+       batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef,provider:translationEngine.value});
        progress={next_offset:batch.next_offset,total:batch.total,failures:batch.failures,done:batch.done};
        googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"批次已保存",startedAt);
        emptyBatches=batch.translated===0?emptyBatches+1:0;
-       if(emptyBatches>=3){let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});googleShowErrors(v);googleStatus.textContent="连续 3 批没有翻译成功，已自动暂停，可能是 Google 限流或代理异常。请先检查失败原因，稍后再继续。";googleBtn.textContent="继续翻译";phase="连续失败已暂停";return}
+       if(emptyBatches>=3){let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef,provider:translationEngine.value});googleShowErrors(v);googleStatus.textContent="连续 3 批没有翻译成功，已自动暂停，可能是 Google 限流或代理异常。请先检查失败原因，稍后再继续。";googleBtn.textContent="继续翻译";phase="连续失败已暂停";return}
        if(++round>10000)throw Error("达到翻译批次安全上限");
       }
-      if(!batch)batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
-      googleHash=batch.draft_sha256;googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"Google 初译完成",startedAt);
-      if(batch.failures){let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});googleShowErrors(v);googleStatus.textContent="初译处理完成，但 "+batch.failures+" 条失败。请先点击「重试翻译失败的条目」，暂不进入 AI 润色。";phase="等待处理失败条目";return}
-      if(googlePaused){googleStatus.textContent="Google 初译已保存。再次点击继续进入 AI 润色。";googleBtn.textContent="继续润色";return}
+      if(!batch)batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef,provider:translationEngine.value});
+      googleHash=batch.draft_sha256;googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"字幕初译完成",startedAt);
+      if(batch.failures){let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef,provider:translationEngine.value});googleShowErrors(v);googleStatus.textContent="初译处理完成，但 "+batch.failures+" 条失败。请先点击「重试翻译失败的条目」，暂不进入 AI 润色。";phase="等待处理失败条目";return}
+      if(googlePaused){googleStatus.textContent="字幕初译已保存。再次点击继续进入 AI 润色。";googleBtn.textContent="继续润色";return}
       googleStatus.textContent="初译完成，失败 "+batch.failures+" 条（保留日语）；DeepSeek 润色开始…";
       let offset=0,roundAI=0,polishError="";
       while(true){
        if(googlePaused){googleStatus.textContent="AI 校对已暂停；初译草稿仍保留，再次执行可恢复翻译并重新开始 AI 建议。";googleBtn.textContent="继续翻译";return}
        phase="DeepSeek 处理第 "+(roundAI+1)+" 批";
        let out;
-       try{out=await api("/api/subtitles/translate/polish","POST",{path,reference_id:googleRef,draft_sha256:googleHash,offset})}
+       try{out=await api("/api/subtitles/translate/polish","POST",{path,reference_id:googleRef,draft_sha256:googleHash,offset,provider:translationEngine.value})}
        catch(e){polishError=e.message;break}
        for(let suggestion of out.suggestions||[]){
         let line=el("div");let check=el("input");check.type="checkbox";
@@ -1172,12 +1179,12 @@ async function show(path,tr){
         line.append(check,document.createTextNode(" "+suggestion.before+" → "+suggestion.after));googleSuggestions.append(line);
        }
        offset=out.next_offset;
-       googleStatus.textContent="DeepSeek 润色完成 "+(++roundAI)+" 批 · Google 初译失败 "+batch.failures+" 条";
+       googleStatus.textContent="DeepSeek 润色完成 "+(++roundAI)+" 批 · 字幕初译失败 "+batch.failures+" 条";
        if(out.done)break;
        if(roundAI>100)throw Error("AI 批次达到安全上限");
       }
       googleDone=true;googlePreview.disabled=false;phase="已完成，等待审核";
-      googleStatus.textContent=polishError?"Google 初译完成，AI 不可用："+polishError+"；可预览初译。":"翻译与 AI 建议已就绪。勾选建议后预览保存。";
+      googleStatus.textContent=polishError?"字幕初译完成，AI 不可用："+polishError+"；可预览初译。":"翻译与 AI 建议已就绪。勾选建议后预览保存。";
       googleBtn.textContent="重新检查翻译";
      }catch(e){googleStatus.textContent="翻译中断："+e.message+"；已完成的批次已保存，可点击继续。";googleBtn.textContent="继续翻译"}
      finally{
@@ -1188,19 +1195,19 @@ async function show(path,tr){
      }
     };
     if(referenceId&&referenceId.endsWith(".srt")){
-     api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId}).then(v=>{
+     api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId,provider:translationEngine.value}).then(v=>{
       googleProgress.max=Math.max(1,v.total);googleProgress.value=v.next_offset;
       googleProgressDetail.textContent="NAS 草稿："+v.next_offset+"/"+v.total+" 条 · 失败 "+v.failures+" 条"+(v.done?" · 初译已完成":" · 点击继续翻译");
       googleShowErrors(v);
       googleStatus.textContent=v.started?"已恢复 NAS 之前保存的初译进度":"参考字幕已恢复，等待开始翻译";
-      googleBtn.textContent=v.started?"继续翻译":"Google 免费初译 → DeepSeek 润色";
+      googleBtn.textContent=v.started?"继续翻译":"开始初译 → DeepSeek 润色";
      }).catch(e=>{googleStatus.textContent="读取历史进度失败："+e.message});
     }
     googlePreview.onclick=async()=>{
      if(!googleDone)return;
      googlePreview.disabled=true;
      try{
-      let payload={path,reference_id:googleRef,replacements:googleEdits};
+      let payload={path,reference_id:googleRef,replacements:googleEdits,provider:translationEngine.value};
       let out=await api("/api/subtitles/translate/preview","POST",payload);
       if(out.draft_sha256!==googleHash)throw Error("草稿已发生变化，请重新预览");
       let excerpt=el("pre","字幕预览：\\n"+out.sample);excerpt.style.whiteSpace="pre-wrap";googleSuggestions.append(excerpt);
