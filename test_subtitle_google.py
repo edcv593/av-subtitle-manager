@@ -24,6 +24,20 @@ class GoogleSubtitleTests(unittest.TestCase):
   result=g.translate_srt(SRT,0,1,fail,sleep=lambda n:None)
   self.assertIn("こんにちは",result["translated_text"])
   self.assertEqual(len(result["failed"]),1)
+ def test_retry_failed_cue_only_preserves_successful_translation(self):
+  original=SRT
+  draft=("1\n00:00:01,000 --> 00:00:02,000\n你好\n\n"
+         "2\n00:00:03,000 --> 00:00:04,000\nありがとう\n").encode()
+  out=g.retry_failed_srt(draft,original,[{"cue":2,"reason":"HTTP 429"}],translator=lambda t:"谢谢",sleep=lambda _:None)
+  self.assertEqual(out["remaining"],[])
+  self.assertEqual(out["resolved"],[2])
+  self.assertIn("你好",out["translated_text"])
+  self.assertIn("谢谢",out["translated_text"])
+  self.assertEqual(timeline.cues(original,"srt"),timeline.cues(out["translated_text"].encode(),"srt"))
+ def test_retry_failure_is_kept(self):
+  result=g.retry_failed_srt(SRT,SRT,[{"cue":1,"reason":"HTTP 429"}],translator=lambda t: (_ for _ in ()).throw(ValueError("still limited")),sleep=lambda _:None)
+  self.assertEqual(result["remaining"][0]["cue"],1)
+  self.assertIn("こんにちは",result["translated_text"])
  def test_invalid_offset(self):
   with self.assertRaises(ValueError):g.translate_srt(SRT,-1,1,sleep=lambda n:None)
  def test_google_response_parser(self):
