@@ -9,6 +9,8 @@ from reliability import embedded_chinese,score,should_skip,next_retry
 import ai_queue
 import review_queue
 import subtitle_files
+import subtitle_delivery
+import subtitle_sources
 import subtitle_quality
 import external_providers
 import subtitle_optimizer
@@ -331,6 +333,56 @@ def review_auto_reference(p):
    except Exception:continue
  except Exception as exc:log.warning("Reference lookup failed for %s: %s",p,exc)
  return None
+
+def review_best_chinese(p,reference_raw,reference_ext,job_id):
+ """Collect local and bounded online Chinese candidates; keep downloads off media."""
+ number=code(p.name)
+ choices=[]
+ for path in subtitle_files.subtitles_for(p):
+  try:
+   if path.stat().st_size<=LIMIT:
+    choices.append({"name":path.name,"data":path.read_bytes(),"ext":path.suffix.lower().lstrip("."),"source":"本地","path":path})
+  except OSError:continue
+ with closing(db()) as c:
+  rows=c.execute("SELECT name,url,ext,source FROM candidates WHERE path=? LIMIT 30",(str(p),)).fetchall()
+ for row in rows:
+  try:
+   payload=candidate_payload(row["url"],LIMIT)
+   choices.append({"name":row["name"],"data":payload,"ext":row["ext"],"source":row["source"]})
+  except (OSError,ValueError,urllib.error.URLError):continue
+ # Xunlei's known Chinese subtitle endpoint is a first-party discovery source.
+ try:
+  for item in normalize(search(number),number)[:6]:
+   try:
+    payload=candidate_payload(item["url"],LIMIT)
+    choices.append({"name":item["name"],"data":payload,"ext":item["ext"],"source":"迅雷"})
+   except (OSError,ValueError,urllib.error.URLError):continue
+ except Exception as exc:log.info("Chinese index unavailable for %s: %s",number,exc)
+ # Public subtitle sites are best effort. Failure of one source is not fatal.
+ with closing(db()) as c:review_queue.set_phase(c,job_id,"正在搜索 JAV字幕 / Subtitle Cat / AVSubtitles 中文字幕")
+ try:
+  pages,errors,_=external_providers.native_search(number,fetch_site_search,max_pages=2)
+  for provider,urls in pages.items():
+   for page_url in urls[:2]:
+    try:
+     if provider=="JAV字幕" and urllib.parse.urlsplit(page_url).path=="/api/download":
+      links=[page_url]
+     else:
+      html=fetch_site_search(page_url,250000)
+      links=external_providers.detail_downloads(provider,page_url,html)
+     for link in links[:2]:
+      try:
+       payload=fetch_site_search(link,LIMIT)
+       name=Path(urllib.parse.urlsplit(link).path).name
+       if provider=="JAV字幕" and urllib.parse.urlsplit(link).path=="/api/download":
+        name=number+".srt"
+       if zipfile.is_zipfile(io.BytesIO(payload)):name+=".zip"
+       data,ext=extract_uploaded_subtitle(payload,name,number)
+       choices.append({"name":name,"data":data,"ext":ext,"source":provider})
+      except Exception:continue
+    except Exception:continue
+ except Exception as exc:log.info("Chinese external discovery failed for %s: %s",number,exc)
+ return subtitle_sources.choose(choices,reference_raw,reference_ext)
 
 def review_worker_one(job):
  job_id=job["id"]
