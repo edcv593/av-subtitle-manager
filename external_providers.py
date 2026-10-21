@@ -75,9 +75,9 @@ def detail_downloads(source,url,page,max_links=8):
 
 # Independent on-site search adapters. A source failure never blocks other sites.
 SEARCH_ENDPOINTS={
- "AVSubtitles":lambda code:"https://www.avsubtitles.com/search_results.php?"+urllib.parse.urlencode({"search":code,"scope":"title"}),
+ "AVSubtitles":lambda code:"https://www.avsubtitles.com/search_results.php?"+urllib.parse.urlencode({"search":code}),
  "Subtitle Cat":lambda code:"https://www.subtitlecat.com/?"+urllib.parse.urlencode({"search":code}),
- "JAV字幕":lambda code:"https://javzimu.com/api/search?"+urllib.parse.urlencode({"name":code}),
+ "JAV字幕":lambda code:"https://javzimu.com/search/"+urllib.parse.quote(code,safe=""),
 }
 class SearchLinks(HTMLParser):
  def __init__(self):
@@ -122,10 +122,11 @@ def native_search(number,fetch_text,max_pages=5,source=None):
   try:
    raw=fetch_text(url,350000)
    if site=="JAV字幕":
-    pages=javzimu_results(raw,number,max_pages)
-    stats[site]["links_seen"]=len(pages)
-    found[site]=pages
-    continue
+    # Browser search is protected by an interactive image CAPTCHA. Do not bypass it.
+    if b"captcha" in raw.lower() or "验证码" in raw.decode("utf-8","replace") or "图片验证" in raw.decode("utf-8","replace"):
+     errors[site]="需要在浏览器完成图片验证码；完成后请下载字幕并通过上传入口导入"
+     found[site]=[]
+     continue
    parser=SearchLinks();parser.feed(raw.decode("utf-8","replace"))
    stats[site]["links_seen"]=len(parser.links)
    for href,title in parser.links:
@@ -141,6 +142,9 @@ def native_search(number,fetch_text,max_pages=5,source=None):
      if not any(number==film_code(re.sub(r"<[^>]+>"," ",markup[max(0,pos-350):pos])) for pos in positions):continue
     if target not in pages:pages.append(target)
     if len(pages)>=max_pages:break
-  except Exception as exc:errors[site]=str(exc)[:160]
+  except Exception as exc:
+   if site=="JAV字幕" and ("403" in str(exc) or "Forbidden" in str(exc)):
+    errors[site]="HTTP 403：网站需要浏览器验证码或拒绝自动请求；请手动搜索并上传字幕"
+   else:errors[site]=str(exc)[:160]
   found[site]=pages
  return found,errors,stats
