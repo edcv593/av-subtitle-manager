@@ -319,6 +319,38 @@ def review_auto_reference(p):
     c.execute("INSERT OR REPLACE INTO video_references VALUES(?,?,?)",(str(p),target.name,time.time()));c.commit()
    return target.name
   except (OSError,ValueError,UnicodeError):continue
+ # Try Subtitle Cat before AVSubtitles. Japanese is accepted only if the
+ # downloaded cues contain genuine Japanese kana; translated Chinese is rejected.
+ try:
+  pages,errors,_=external_providers.native_search(
+   number,lambda u,limit:fetch_site_search(u,limit,8),max_pages=5,source="Subtitle Cat")
+  for detail in pages.get("Subtitle Cat",[])[:5]:
+   try:
+    html=fetch_site_search(detail,300000,8)
+    links=external_providers.subtitlecat_japanese_downloads(detail,html)
+    for link in links[:3]:
+     try:
+      payload=fetch_site_search(link,LIMIT,8)
+      suffix=Path(urllib.parse.urlsplit(link).path).suffix.lower()
+      filename=number+(suffix if suffix in SUB or suffix==".zip" else ".srt")
+      if zipfile.is_zipfile(io.BytesIO(payload)):filename=number+".zip"
+      data,ext=extract_uploaded_subtitle(payload,filename,number)
+      if not valid(data,ext):continue
+      rows=subtitle_compare.entries(data,ext)
+      if len(rows)<3:continue
+      kana=sum(bool(subtitle_compare.JAPANESE.search(x["text"])) for x in rows)
+      if kana/max(1,len(rows))<0.35:continue
+      digest=hashlib.sha256(data).hexdigest()
+      folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
+      target=folder/(digest+"."+ext)
+      if not target.exists():target.write_bytes(data)
+      with closing(db()) as c:
+       c.execute("INSERT OR REPLACE INTO video_references VALUES(?,?,?)",(str(p),target.name,time.time()));c.commit()
+      log.info("Japanese reference from Subtitle Cat: %s",detail)
+      return target.name
+     except Exception as exc:log.debug("Subtitle Cat Japanese download rejected: %s",exc)
+   except Exception as exc:log.debug("Subtitle Cat Japanese detail failed: %s",exc)
+ except Exception as exc:log.info("Subtitle Cat Japanese search unavailable for %s: %s",number,exc)
  details=[]
  try:
   url=external_providers.SEARCH_ENDPOINTS["AVSubtitles"](number)
@@ -415,7 +447,7 @@ def review_worker_one(job):
     refrow=c.execute("SELECT reference_id FROM video_references WHERE video_path=?",(str(p),)).fetchone()
     reference_id=refrow["reference_id"] if refrow else ""
   if not reference_id:
-   with closing(db()) as c:review_queue.set_phase(c,job_id,"正在检索 AVSubtitles 日语参考字幕（网络请求可能较慢）")
+   with closing(db()) as c:review_queue.set_phase(c,job_id,"正在检索 Subtitle Cat → AVSubtitles 日语参考字幕（网络请求可能较慢）")
    reference_id=review_auto_reference(p)
   # Japanese evidence is optional: do not block Chinese proofreading when unavailable.
   reference_raw=None;reference_ext=None
