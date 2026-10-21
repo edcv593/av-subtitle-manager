@@ -6,6 +6,7 @@ import timeline
 from timeline import assess,video_duration
 from reliability import embedded_chinese,score,should_skip,next_retry
 import ai_queue
+import review_queue
 import subtitle_files
 import subtitle_quality
 import external_providers
@@ -40,6 +41,8 @@ def db():
  c.execute("CREATE TABLE IF NOT EXISTS candidate_uploads(path TEXT,url TEXT PRIMARY KEY,filename TEXT NOT NULL,created REAL NOT NULL)")
  c.execute("CREATE TABLE IF NOT EXISTS retry_attempts(path TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0)")
  ai_queue.init(c)
+ review_queue.init(c)
+ c.execute("CREATE TABLE IF NOT EXISTS video_references(video_path TEXT PRIMARY KEY,reference_id TEXT NOT NULL,updated REAL NOT NULL)")
  c.commit();return c
 def code(name):
  m=re.search(r"(?<![A-Z0-9])([A-Z]{2,8})[-_. ]*(\d{2,6})(?!\d)",Path(name).stem.upper())
@@ -280,7 +283,9 @@ def loop():
   time.sleep(INTERVAL)
 @app.on_event("startup")
 def start():
- db().close();threading.Thread(target=loop,daemon=True).start()
+ with db() as c:review_queue.recover(c)
+ threading.Thread(target=loop,daemon=True).start()
+ threading.Thread(target=review_worker_loop,daemon=True,name="nas-review-worker").start()
 def auth(req):
  if not TOKEN or TOKEN=="CHANGE_ME_TO_A_LONG_RANDOM_PASSWORD":raise HTTPException(503,"Configure WEB_TOKEN")
  if not secrets.compare_digest(req.headers.get("x-auth-token",""),TOKEN):raise HTTPException(401,"Invalid token")
@@ -290,6 +295,185 @@ def video(c,path):
  p=Path(path)
  if not p.is_file() or not p.resolve().is_relative_to(MEDIA.resolve()):raise HTTPException(400,"Invalid path")
  return p
+
+def review_auto_reference(p):
+ """Best-effort public reference retrieval; never accesses video contents."""
+ number=code(p.name)
+ if not number:return None
+ try:
+  url=external_providers.SEARCH_ENDPOINTS["AVSubtitles"](number)
+  page=fetch_site_search(url,350000)
+  details=external_providers.avsubtitles_reference_pages(number,page,max_items=4)
+  if not details:
+   pages,_,_=external_providers.native_search(number,fetch_site_search,max_pages=2,source="AVSubtitles")
+   for movie in pages.get("AVSubtitles",[])[:2]:
+    try:details.extend(external_providers.avsubtitles_reference_pages(number,fetch_site_search(movie,350000),max_items=4))
+    except Exception:pass
+  for detail in dict.fromkeys(details):
+   try:
+    links=external_providers.avsubtitles_reference_downloads(detail,fetch_site_search(detail,350000))
+    for link in links[:3]:
+     try:
+      payload=fetch_site_search(link,LIMIT)
+      suffix=Path(urllib.parse.urlsplit(link).path).suffix.lower()
+      filename="reference"+(suffix if suffix in SUB or suffix==".zip" else ".srt")
+      data,ext=extract_uploaded_subtitle(payload,filename,number)
+      if not valid(data,ext) or not timeline.cues(data,ext):continue
+      digest=hashlib.sha256(data).hexdigest()
+      folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
+      target=folder/(digest+"."+ext)
+      if not target.exists():target.write_bytes(data)
+      with db() as c:
+       c.execute("INSERT OR REPLACE INTO video_references VALUES(?,?,?)",(str(p),target.name,time.time()));c.commit()
+      return target.name
+     except Exception:continue
+   except Exception:continue
+ except Exception as exc:log.warning("Reference lookup failed for %s: %s",p,exc)
+ return None
+
+def review_worker_one(job):
+ job_id=job["id"]
+ try:
+  with db() as c:
+   p=video(c,job["video_path"])
+   if SKIP_C and marked(p.name):raise ValueError("-C 影片不允许修改")
+   files=subtitle_files.subtitles_for(p)
+   if len(files)!=1:raise ValueError("需要恰好一份外挂中文字幕，当前请人工审核")
+   target=files[0];ext=target.suffix.lower().lstrip(".")
+   if target.stat().st_size>LIMIT:raise ValueError("字幕文件过大")
+   raw=target.read_bytes()
+   original_sha=subtitle_optimizer.digest(raw)
+   if job["original_sha256"] and job["original_sha256"]!=original_sha:raise ValueError("主字幕已变化，请重新创建校对任务")
+   main_entries=subtitle_compare.entries(raw,ext)
+   if sum(bool(subtitle_compare.HAN.search(x["text"])) for x in main_entries)<max(1,len(main_entries)//3):
+    raise ValueError("主字幕不符合中文校对条件")
+   reference_id=job["reference_id"]
+   if not reference_id:
+    refrow=c.execute("SELECT reference_id FROM video_references WHERE video_path=?",(str(p),)).fetchone()
+    reference_id=refrow["reference_id"] if refrow else ""
+  if not reference_id:reference_id=review_auto_reference(p)
+  if not reference_id:
+   with db() as c:review_queue.finish(c,job_id,"reviewing","未找到可验证的日语参考字幕；请上传参考字幕后重试")
+   return
+  if not re.fullmatch(r"[0-9a-f]{64}\.(srt|vtt|ass|ssa)",reference_id):raise ValueError("参考字幕标识无效")
+  source=DATA/"reference_subtitles"/reference_id
+  if not source.is_file() or source.stat().st_size>LIMIT:raise ValueError("参考字幕缺失或过大")
+  reference_raw=source.read_bytes()
+  if hashlib.sha256(reference_raw).hexdigest()!=reference_id.split(".")[0]:raise ValueError("参考字幕哈希校验失败")
+  refs=[(reference_id,reference_raw,source.suffix.lower().lstrip("."),0)]
+  offset=job["offset"];matched=job["matched"]
+  suggestions=json.loads(job["suggestions"])
+  if not isinstance(suggestions,list):raise ValueError("校对进度文件异常")
+  key,model,endpoint=ai_provider_settings.credentials(DATA)
+  if not key:raise ValueError("请先在 AI 设置中配置 API Key")
+  allowed=timeline.decode(raw).splitlines()
+  while offset<len(main_entries):
+   with db() as c:
+    current=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
+    if not current or current["status"]!="running":return
+   batch=subtitle_compare.review_batch(raw,ext,refs,offset=offset,max_cues=25)
+   hits=sum(bool(x["references"]) for x in batch["rows"])
+   new=subtitle_compare.ai_review(batch["rows"],key,model,endpoint,allowed) if hits else []
+   suggestions.extend(new);matched+=hits
+   previous=offset;offset=batch["next_offset"]
+   if offset<=previous:raise ValueError("校对进度未前进")
+   with db() as c:
+    if not review_queue.checkpoint(c,job_id,original_sha,offset,batch["total"],matched,suggestions):return
+   time.sleep(0.3)
+  if not job["auto_apply"]:
+   with db() as c:review_queue.finish(c,job_id,"reviewing","校对完成，等待人工审核建议")
+   return
+  edits={};conflicts=set()
+  for item in suggestions:
+   before=item.get("before");after=item.get("after")
+   if not isinstance(before,str) or not isinstance(after,str) or not before or not after or before==after:continue
+   if not subtitle_compare.HAN.search(after) or subtitle_compare.JAPANESE.search(after):continue
+   if before in edits and edits[before]!=after:conflicts.add(before)
+   else:edits[before]=after
+  for before in conflicts:edits.pop(before,None)
+  if len(edits)>200:raise ValueError("建议超过 200 条安全上限，请人工审核")
+  if not edits:
+   with db() as c:review_queue.finish(c,job_id,"completed","没有可安全应用的建议")
+   return
+  with db() as c:
+   row=c.execute("SELECT status FROM review_jobs WHERE id=?",(job_id,)).fetchone()
+   if not row or row["status"]!="running":return
+   latest=subtitle_files.subtitles_for(p)
+   if len(latest)!=1 or latest[0]!=target or subtitle_optimizer.digest(target.read_bytes())!=original_sha:
+    raise ValueError("主字幕已发生变化，已停止自动替换")
+   optimized,changes=subtitle_optimizer.optimize(raw,ext,True,True,edits)
+   if timeline.cues(raw,ext)!=timeline.cues(optimized,ext):raise ValueError("时间轴发生变化，拒绝保存")
+   if not valid(optimized,ext) or subtitle_quality.evaluate(optimized,ext)["level"]=="blocked":
+    raise ValueError("优化后字幕质量校验失败")
+   if not changes:
+    review_queue.finish(c,job_id,"completed","没有需要保存的变化")
+    return
+   saved,backup=subtitle_files.replace(p,optimized,ext)
+   reset_retry(c,p);record(c,p,code(p.name),"existing","NAS review optimized | backup="+backup.name)
+   review_queue.finish(c,job_id,"completed","",backup.name,len(changes))
+ except Exception as exc:
+  log.exception("NAS review job %s failed",job_id)
+  with db() as c:review_queue.finish(c,job_id,"failed",str(exc)[:450])
+
+def review_worker_loop():
+ while True:
+  try:
+   with db() as c:job=review_queue.claim(c)
+   if job:review_worker_one(job)
+   else:time.sleep(2)
+  except Exception:
+   log.exception("NAS review worker error")
+   time.sleep(5)
+
+@app.get("/api/review/jobs")
+def get_review_jobs(request:Request,status:str=""):
+ auth(request)
+ with db() as c:
+  try:return {"items":review_queue.list_jobs(c,status)}
+  except ValueError as exc:raise HTTPException(400,str(exc))
+
+@app.get("/api/review/jobs/{job_id}")
+def get_review_job(request:Request,job_id:int):
+ auth(request)
+ with db() as c:
+  row=c.execute("SELECT * FROM review_jobs WHERE id=?",(job_id,)).fetchone()
+  if not row:raise HTTPException(404,"任务不存在")
+  result=review_queue.summarize(row)
+  result["suggestions"]=json.loads(row["suggestions"])
+  return result
+
+@app.post("/api/review/jobs")
+async def enqueue_review_jobs(request:Request):
+ auth(request);body=await request.json()
+ paths=body.get("paths")
+ if paths is None:paths=[body.get("path","")]
+ if not isinstance(paths,list) or not paths or len(paths)>500:raise HTTPException(400,"每次最多添加 500 部影片")
+ reference_id=body.get("reference_id","")
+ if not isinstance(reference_id,str) or (reference_id and not re.fullmatch(r"[0-9a-f]{64}\.(srt|vtt|ass|ssa)",reference_id)):
+  raise HTTPException(400,"参考字幕标识无效")
+ if reference_id:
+  source=DATA/"reference_subtitles"/reference_id
+  if not source.is_file() or source.stat().st_size>LIMIT or hashlib.sha256(source.read_bytes()).hexdigest()!=reference_id.split(".")[0]:
+   raise HTTPException(400,"参考字幕不存在或哈希不符")
+ if len(paths)>1 and reference_id:raise HTTPException(400,"批量任务不能将同一参考字幕应用于不同影片")
+ auto_apply=body.get("auto_apply",False)
+ if not isinstance(auto_apply,bool):raise HTTPException(400,"auto_apply 必须为布尔值")
+ items=[]
+ with db() as c:
+  for path in dict.fromkeys(paths):
+   p=video(c,str(path))
+   if SKIP_C and marked(p.name):continue
+   row,created=review_queue.enqueue(c,str(p),reference_id,auto_apply)
+   items.append({"id":row["id"],"path":str(p),"created":created,"status":row["status"]})
+ return {"items":items,"created":sum(int(x["created"]) for x in items)}
+
+@app.post("/api/review/jobs/{job_id}/action")
+async def review_job_action(request:Request,job_id:int):
+ auth(request);body=await request.json()
+ with db() as c:
+  try:return {"job":review_queue.action(c,job_id,str(body.get("action","")))}
+  except ValueError as exc:raise HTTPException(409,str(exc))
+
 @app.get("/api/status")
 def status(request:Request):
  auth(request)
@@ -554,6 +738,8 @@ async def upload_reference_subtitle(request:Request,path:str,filename:str):
   folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
   target=folder/(digest+"."+ext)
   if not target.exists():target.write_bytes(raw)
+  with db() as c:
+   c.execute("INSERT OR REPLACE INTO video_references VALUES(?,?,?)",(str(p),target.name,time.time()));c.commit()
   return {"id":digest+"."+ext,"filename":Path(filename).name,"size":len(raw),"notice":"参考字幕已暂存于 NAS 数据目录，不会替换现有中文字幕"}
 @app.post("/api/subtitles/reference/auto")
 async def auto_reference_subtitle(request:Request):
@@ -602,6 +788,7 @@ async def auto_reference_subtitle(request:Request):
       folder=DATA/"reference_subtitles";folder.mkdir(parents=True,exist_ok=True)
       target=folder/(digest+"."+ext)
       if not target.exists():target.write_bytes(data)
+      c.execute("INSERT OR REPLACE INTO video_references VALUES(?,?,?)",(str(p),target.name,time.time()));c.commit()
       return {"reference_id":target.name,"detail_url":detail_url,"download_url":link,"errors":errors,"notice":"日语参考字幕已自动保存；不会替换中文字幕"}
      except Exception as exc:errors.append("下载或校验失败："+str(exc)[:100])
    except Exception as exc:errors.append("详情页读取失败："+str(exc)[:100])
