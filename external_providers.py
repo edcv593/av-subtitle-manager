@@ -128,20 +128,30 @@ def avsubtitles_reference_pages(number,raw,max_items=12):
  return results
 
 def avsubtitles_reference_downloads(url,page,max_links=8):
- """Extract explicit download links from a verified Japanese AVSubtitles detail page."""
+ """Extract real AVSubtitles download URLs, preserving the site's revid parameter."""
  parsed=urllib.parse.urlsplit(url)
  if parsed.scheme!="https" or parsed.hostname not in ("avsubtitles.com","www.avsubtitles.com") or not re.fullmatch(r"/movie[0-9]+/[^/?#]+/subtitles/ja/[0-9]+/?",parsed.path,re.I):
   raise ValueError("不是 AVSubtitles 日语字幕详情页")
- parser=Links();parser.feed(page.decode("utf-8","replace"))
+ subid=parsed.path.rstrip("/").rsplit("/",1)[-1]
+ text=html.unescape(page.decode("utf-8","replace")).replace("\\/","/")
+ parser=Links();parser.feed(text)
+ candidates=[href for href,_ in parser.links]
+ # Download links can be attached to buttons or JavaScript, not just visible <a> text.
+ candidates+=re.findall(r"""(?:href|data-url|data-href|window[.]location(?:[.]href)?|location[.]href)\s*[=:]\s*['"]([^'"]+)['"]""",text,re.I)
+ candidates+=re.findall(r"""(?:https?://(?:www[.])?avsubtitles[.]com)?/download_sub[.]php[?][^\s'"<>\\]+""",text,re.I)
  links=[]
- for href,label in parser.links:
-  target=urllib.parse.urljoin(url,html.unescape(href))
+ for href in candidates:
+  target=urllib.parse.urljoin(url,html.unescape(href).replace("&amp;","&"))
   dest=urllib.parse.urlsplit(target)
   if dest.scheme!="https" or dest.hostname not in ("avsubtitles.com","www.avsubtitles.com") or dest.username or dest.password:continue
-  if not (dest.path.lower().endswith((".srt",".ass",".ssa",".vtt",".zip")) or dest.path.lower().endswith("/download_sub.php") or ("/download" in dest.path.lower() and re.search(r"download|srt|zip|字幕",label,re.I))):continue
+  if dest.path.lower().endswith("/download_sub.php"):
+   params=urllib.parse.parse_qs(dest.query)
+   if params.get("subid")!=[subid] or not params.get("revid"):continue
+  elif not dest.path.lower().endswith((".srt",".ass",".ssa",".vtt",".zip")):continue
   if target not in links:links.append(target)
   if len(links)>=max_links:break
  return links
+
 
 def native_search(number,fetch_text,max_pages=5,source=None):
  """Search each provider's own HTML results, without Bing or fabricated matches."""
