@@ -933,6 +933,66 @@ async function show(path,tr){
     let autoBtn=el("button","一键获取日语参考并整片 AI 校对");
     let autoStatus=el("p","自动流程不会覆盖原字幕；AI 建议需人工勾选并预览保存。");
     panel.append(autoBtn,autoStatus);
+    let googleBtn=el("button","Google 免费初译 → DeepSeek 润色");
+    let googleStatus=el("p","优先使用上方已上传的日语 SRT；没有上传时才尝试 AVSubtitles 自动获取。");
+    let googleSuggestions=el("div");let googlePreview=el("button","预览并生成独立中文字幕");googlePreview.disabled=true;
+    panel.append(googleBtn,googleStatus,googleSuggestions,googlePreview);
+    let googleRef=null,googleHash=null,googleEdits={},googleDone=false;
+    googleBtn.onclick=async()=>{
+     if(!confirm("将日语字幕文本发送到非官方 Google 翻译接口，并使用已配置的 DeepSeek 进行润色（可能产生费用）。确认？"))return;
+     googleBtn.disabled=true;googlePreview.disabled=true;googleDone=false;googleEdits={};googleSuggestions.replaceChildren();
+     try{
+      googleRef=referenceId;
+      if(!googleRef){
+       googleStatus.textContent="正在尝试从 AVSubtitles 获取日语参考字幕…";
+       let found=await api("/api/subtitles/reference/auto","POST",{path});
+       if(!found.reference_id)throw Error("AVSubtitles 未能自动获取："+(found.errors||[]).join("；").slice(0,250)+"。可先在上方上传日语 SRT。");
+       googleRef=found.reference_id;referenceId=googleRef;
+       refInfo.textContent="自动获取日语参考字幕："+googleRef;
+      }
+      if(!googleRef.endsWith(".srt"))throw Error("目前 Google 初译仅支持 SRT 格式日语参考字幕");
+      let batch,round=0;
+      do{
+       googleStatus.textContent="Google 初译中："+(batch?batch.next_offset+"/"+batch.total:"准备中")+" 条…";
+       batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
+       if(++round>300)throw Error("达到翻译安全批次上限");
+      }while(!batch.done);
+      googleHash=batch.draft_sha256;
+      googleStatus.textContent="Google 初译完成；失败 "+batch.failures+" 条（保留日语）。开始 DeepSeek 润色…";
+      let offset=0,roundAI=0,polishError="";
+      while(true){
+       let out;
+       try{out=await api("/api/subtitles/translate/polish","POST",{path,reference_id:googleRef,draft_sha256:googleHash,offset})}
+       catch(e){polishError=e.message;break}
+       for(let suggestion of out.suggestions||[]){
+        let line=el("div");let check=el("input");check.type="checkbox";
+        check.onchange=()=>{if(check.checked)googleEdits[suggestion.before]=suggestion.after;else delete googleEdits[suggestion.before]};
+        line.append(check,document.createTextNode(" "+suggestion.before+" → "+suggestion.after));googleSuggestions.append(line);
+       }
+       offset=out.next_offset;
+       googleStatus.textContent="DeepSeek 润色："+(++roundAI)+" 批；Google 初译失败 "+batch.failures+" 条";
+       if(out.done)break;
+       if(roundAI>100)throw Error("AI 批次达到安全上限");
+      }
+      googleDone=true;googlePreview.disabled=false;
+      googleStatus.textContent=polishError?"Google 初译完成，DeepSeek 暂不可用："+polishError+"；可以预览初译。":"初译与 AI 润色建议已就绪。请勾选建议并预览保存。";
+     }catch(e){googleStatus.textContent="翻译暂停："+e.message}
+     finally{googleBtn.disabled=false}
+    };
+    googlePreview.onclick=async()=>{
+     if(!googleDone)return;
+     googlePreview.disabled=true;
+     try{
+      let payload={path,reference_id:googleRef,replacements:googleEdits};
+      let out=await api("/api/subtitles/translate/preview","POST",payload);
+      if(out.draft_sha256!==googleHash)throw Error("草稿已发生变化，请重新预览");
+      let excerpt=el("pre","字幕预览：\\n"+out.sample);excerpt.style.whiteSpace="pre-wrap";googleSuggestions.append(excerpt);
+      if(!confirm("已显示字幕预览；初译失败 "+out.failed+" 条，润色修改 "+out.changed+" 行。确认创建独立 .zh.srt？"))return;
+      let saved=await api("/api/subtitles/translate/save","POST",{...payload,draft_sha256:out.draft_sha256,optimized_sha256:out.optimized_sha256});
+      googleStatus.textContent="已创建："+saved.file;
+     }catch(e){googleStatus.textContent="保存失败："+e.message}
+     finally{googlePreview.disabled=false}
+    };
     let sceneBtn=el("button","场景一致性检查说明");
     let applyBtn=el("button","确认保存并备份");applyBtn.disabled=true;
     let pending=null;let replacements={};
@@ -978,8 +1038,8 @@ async function show(path,tr){
      result.replaceChildren();
      try{
       autoStatus.textContent="正在搜索并验证日语参考字幕…";
-      let found=await api("/api/subtitles/reference/auto","POST",{path});
-      if(found.reference_id){referenceId=found.reference_id;refInfo.textContent="自动获取日语参考字幕："+referenceId}
+      let found=referenceId?{reference_id:referenceId}:await api("/api/subtitles/reference/auto","POST",{path});
+      if(found.reference_id){referenceId=found.reference_id;refInfo.textContent="正在使用日语参考字幕："+referenceId}
       else{autoStatus.textContent="未获取到日语参考字幕，将仅依据中文字幕校对。"+(found.errors||[]).join("；").slice(0,200)}
       let batches=0;let total=0;
       while(true){
