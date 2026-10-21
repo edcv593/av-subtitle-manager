@@ -87,6 +87,39 @@ def reference_excerpt(raw,ext,max_chars=6000):
  text=raw.decode("utf-8-sig","replace")
  return text[:max_chars]
 
+def reference_for_window(raw,ext,reference_raw,reference_ext,max_chars=6000):
+ """Select reference cues by overlapping timestamps, not by the first N characters."""
+ import timeline
+ source=timeline.cues(raw,ext)
+ reference_times=timeline.cues(reference_raw,reference_ext)
+ if not source or not reference_times:raise ValueError("字幕时间轴无效")
+ # The Chinese sample sent to AI is bounded to 12000 characters.
+ sample=raw.decode("utf-8-sig","replace")[:12000]
+ sampled_times=timeline.cues(sample.encode("utf-8"),ext)
+ if not sampled_times:
+  # A truncated ASS/SRT final cue can be incomplete; fall back to the first full cues.
+  sampled_times=source[:max(1,min(len(source),30))]
+ window_start=min(a for a,_ in sampled_times)
+ window_end=max(b for _,b in sampled_times)
+ text=reference_raw.decode("utf-8-sig","replace")
+ if reference_ext in ("srt","vtt"):
+  blocks=re.split(r"\r?\n\s*\r?\n",text)
+  selected=[]
+  for block in blocks:
+   times=timeline.cues(block.encode("utf-8"),reference_ext)
+   if times and any(a<=window_end and b>=window_start for a,b in times):
+    selected.append(block)
+  return "\n\n".join(selected)[:max_chars]
+ # ASS/SSA: preserve dialogue records, not unrelated metadata.
+ selected=[]
+ for line in text.splitlines():
+  if not ASS_TEXT.match(line):continue
+  # Parse using original ASS header for field order.
+  candidate=(text[:text.find(line)]+line+"\n").encode("utf-8")
+  times=timeline.cues(candidate,reference_ext)
+  if times and any(a<=window_end and b>=window_start for a,b in times):selected.append(line)
+ return "\n".join(selected)[:max_chars]
+
 def ai_suggestions(raw,ext,api_key,model="gpt-4o-mini",endpoint="https://api.openai.com/v1/chat/completions",reference=None):
  """Optional external text-only suggestions. Never automatically edits files."""
  if not api_key:raise ValueError("未配置字幕润色 API Key")
