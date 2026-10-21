@@ -98,20 +98,19 @@ def native_search(number,fetch_text,max_pages=5,source=None):
  for source_name,make_url in SEARCH_ENDPOINTS.items():
   if source is not None and source!=source_name:continue
   site=source_name
-  source=site
-  url=make_url(number);pages=[];stats[source]={"search_url":url,"links_seen":0}
+  url=make_url(number);pages=[];stats[site]={"search_url":url,"links_seen":0}
   try:
    raw=fetch_text(url,350000)
    parser=SearchLinks();parser.feed(raw.decode("utf-8","replace"))
-   stats[source]["links_seen"]=len(parser.links)
+   stats[site]["links_seen"]=len(parser.links)
    for href,title in parser.links:
     target=urllib.parse.urljoin(url,html.unescape(href))
     parsed=urllib.parse.urlsplit(target)
-    if parsed.scheme!="https" or parsed.hostname not in (SITES[source],"www."+SITES[source]):continue
-    if not DETAIL_PATTERNS[source].search(parsed.path+("?"+parsed.query if parsed.query else "")):continue
+    if parsed.scheme!="https" or parsed.hostname not in (SITES[site],"www."+SITES[site]):continue
+    if not DETAIL_PATTERNS[site].search(parsed.path+("?"+parsed.query if parsed.query else "")):continue
     if number not in {film_code(title),film_code(urllib.parse.unquote(parsed.path))}:continue
     if target not in pages:pages.append(target)
     if len(pages)>=max_pages:break
-  except Exception as exc:errors[source]=str(exc)[:160]
-  found[source]=pages
+  except Exception as exc:errors[site]=str(exc)[:160]
+  found[site]=pages
  return found,errors,stats
