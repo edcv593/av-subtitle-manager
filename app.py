@@ -351,8 +351,11 @@ async def discover_external(request:Request):
   for source,urls in pages.items():
    for page_url in urls[:3]:
     try:
-     page=await asyncio.to_thread(fetch,page_url,250000)
-     links=external_providers.detail_downloads(source,page_url,page)
+     if source=="JAV字幕" and urllib.parse.urlsplit(page_url).path=="/api/download":
+      links=[page_url]
+     else:
+      page=await asyncio.to_thread(fetch,page_url,250000)
+      links=external_providers.detail_downloads(source,page_url,page)
      stats[source]["download_links"]+=len(links)
      if not links:errors[source]="详情页没有可解析的中文字幕下载链接"
      for link in links[:3]:
