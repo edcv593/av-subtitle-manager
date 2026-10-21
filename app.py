@@ -1045,7 +1045,6 @@ async function show(path,tr){
       }
       if(!batch)batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
       googleHash=batch.draft_sha256;googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"Google 初译完成",startedAt);
-      googlePause.disabled=true;
       if(googlePaused){googleStatus.textContent="Google 初译已保存。再次点击继续进入 AI 润色。";googleBtn.textContent="继续润色";return}
       googleStatus.textContent="初译完成，失败 "+batch.failures+" 条（保留日语）；DeepSeek 润色开始…";
       let offset=0,roundAI=0,polishError="";
