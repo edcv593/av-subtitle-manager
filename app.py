@@ -63,7 +63,7 @@ def fetch_public_search(url,limit=250000):
   addresses=socket.getaddrinfo(u.hostname,443,type=socket.SOCK_STREAM)
   if not addresses or any(not ipaddress.ip_address(x[4][0]).is_global for x in addresses):
    raise ValueError("Search destination is not public")
-  req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0 (compatible; AVSubtitleManager/1.0)","Accept":"application/rss+xml, application/xml;q=0.9, */*;q=0.5"})
+  req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36","Accept":"application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5","Accept-Language":"zh-CN,zh;q=0.9,en;q=0.7","Cache-Control":"no-cache"})
   try:
    with urllib.request.build_opener(NoRedirect()).open(req,timeout=20) as resp:
     data=resp.read(limit+1)
