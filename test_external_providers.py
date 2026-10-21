@@ -30,15 +30,20 @@ class ProviderTests(unittest.TestCase):
   self.assertEqual(found["JAV字幕"],[])
   self.assertIn("JAV字幕",errors)
   self.assertEqual(stats["Subtitle Cat"]["links_seen"],1)
- def test_javzimu_json_search(self):
-  data=json.dumps({"data":[{"name":"IPZZ-791 中文字幕","cid":"abc123","ext":"srt"},{"name":"IPZZ-792","cid":"abc124","ext":"srt"},{"name":"IPZZ-791","cid":"../../etc","ext":"srt"}]}).encode()
-  found,errors,stats=native_search("IPZZ-791",lambda url,limit:data,source="JAV字幕")
-  self.assertEqual(len(found["JAV字幕"]),1)
-  self.assertIn("/api/download?cid=abc123",found["JAV字幕"][0])
-  self.assertEqual(errors,{})
-  self.assertEqual(stats["JAV字幕"]["links_seen"],1)
- def test_javzimu_rejects_invalid_json(self):
-  with self.assertRaises(ValueError):javzimu_results(b"<html>error</html>","IPZZ-791")
+ def test_javzimu_captcha_requires_manual_action(self):
+  html="请完成图片验证以显示搜索结果".encode()
+  found,errors,stats=native_search("IPZZ-791",lambda url,limit:html,source="JAV字幕")
+  self.assertEqual(found["JAV字幕"],[])
+  self.assertIn("验证码",errors["JAV字幕"])
+  self.assertEqual(stats["JAV字幕"]["search_url"],"https://javzimu.com/search/IPZZ-791")
+ def test_javzimu_403_is_explained(self):
+  def denied(url,limit):raise ValueError("HTTP Error 403: Forbidden")
+  found,errors,_=native_search("IPZZ-791",denied,source="JAV字幕")
+  self.assertEqual(found["JAV字幕"],[])
+  self.assertIn("手动搜索",errors["JAV字幕"])
+ def test_avsubtitles_search_uses_confirmed_url(self):
+  _,_,stats=native_search("IPZZ-791",lambda url,limit:b"",source="AVSubtitles")
+  self.assertEqual(stats["AVSubtitles"]["search_url"],"https://www.avsubtitles.com/search_results.php?search=IPZZ-791")
  def test_avsubtitles_details_context(self):
   html=b'<div><h4>IPZZ-791 (2026)</h4><a href="/movie1234/example">Details</a></div>'
   found,errors,stats=native_search("IPZZ-791",lambda url,limit:html,source="AVSubtitles")
