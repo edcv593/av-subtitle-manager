@@ -94,7 +94,7 @@ def review_batch(primary_raw,primary_ext,refs,offset=0,max_cues=25):
 def ai_review(rows,api_key,model,endpoint,allowed_lines):
  """Small evidence batches avoid output truncation; retry length-truncated responses with smaller groups."""
  if not api_key:raise ValueError("请先配置 DeepSeek API Key")
- evidence=[r for r in rows if r["references"] and r["chinese"]]
+ evidence=[r for r in rows if r["references"] and r["chinese"] and HAN.search(r["chinese"]) and not JAPANESE.search(r["chinese"])]
  if not evidence:return []
  def one(group,depth=0):
   compact=[{"index":r["index"],"chinese":r["chinese"][:250],"references":[{"text":x["text"][:300],"source":x["source"]} for x in r["references"][:2]]} for r in group]
