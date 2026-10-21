@@ -80,49 +80,65 @@ def preview(raw,ext,simplify=True,punctuation=True,replacements=None):
  return {"original_sha256":digest(raw),"optimized_sha256":digest(data),"changed":len(changes),"changes":changes[:60],"truncated":len(changes)>60,"original_size":len(raw),"optimized_size":len(data)}
 
 def reference_excerpt(raw,ext,max_chars=6000):
- """Bounded, text-only reference; rejects malformed subtitle timelines."""
+ """Validate and decode an original-language reference without corrupting its encoding."""
  import timeline
  if ext not in ("srt","vtt","ass","ssa") or not timeline.cues(raw,ext):
   raise ValueError("参考字幕格式或时间轴无效")
- text=raw.decode("utf-8-sig","replace")
+ text=timeline.decode(raw)
+ if text is None:raise ValueError("参考字幕编码无法识别")
  return text[:max_chars]
 
 def reference_for_window(raw,ext,reference_raw,reference_ext,max_chars=6000,offset=0):
- """Select reference cues by overlapping timestamps, not by the first N characters."""
+ """Match complete reference cues against the selected Chinese subtitle batch."""
  import timeline
  source=timeline.cues(raw,ext)
  reference_times=timeline.cues(reference_raw,reference_ext)
  if not source or not reference_times:raise ValueError("字幕时间轴无效")
- sample,next_offset,_=ai_batch(raw,offset)
- prefix=raw.decode("utf-8-sig","replace")[:offset]
+ sample,_,_=ai_batch(raw,offset)
+ full_text=raw.decode("utf-8-sig","replace")
+ prefix=full_text[:offset]
  if ext in ("srt","vtt"):
   count=lambda value:sum(1 for line in value.splitlines() if "-->" in line)
  else:
   count=lambda value:sum(1 for line in value.splitlines() if ASS_TEXT.match(line))
  start_index=count(prefix)
  sample_count=count(sample)
- sampled_times=source[start_index:start_index+sample_count]
- if not sampled_times:raise ValueError("当前批次缺少可匹配的字幕时间轴")
- window_start=min(a for a,_ in sampled_times)
- window_end=max(b for _,b in sampled_times)
- text=reference_raw.decode("utf-8-sig","replace")
+ selected_times=source[start_index:start_index+sample_count]
+ if not selected_times:raise ValueError("当前批次缺少可匹配的字幕时间轴")
+ window_start=min(a for a,_ in selected_times)
+ window_end=max(b for _,b in selected_times)
+ text=timeline.decode(reference_raw)
+ if text is None:raise ValueError("参考字幕编码无法识别")
+ selected=[]
  if reference_ext in ("srt","vtt"):
-  blocks=re.split(r"\r?\n\s*\r?\n",text)
-  selected=[]
+  # Match each complete block; do not include a partial subtitle at a batch boundary.
+  blocks=re.split(r"\\r?\\n\\s*\\r?\\n",text)
   for block in blocks:
    times=timeline.cues(block.encode("utf-8"),reference_ext)
    if times and any(a<=window_end and b>=window_start for a,b in times):
     selected.append(block)
-  return "\n\n".join(selected)[:max_chars]
- # ASS/SSA: preserve dialogue records, not unrelated metadata.
- selected=[]
- for line in text.splitlines():
-  if not ASS_TEXT.match(line):continue
-  # Parse using original ASS header for field order.
-  candidate=(text[:text.find(line)]+line+"\n").encode("utf-8")
-  times=timeline.cues(candidate,reference_ext)
-  if times and any(a<=window_end and b>=window_start for a,b in times):selected.append(line)
- return "\n".join(selected)[:max_chars]
+ else:
+  # Dialogue fields use the original ASS Format declaration, including custom ordering.
+  in_events=False
+  format_fields=[]
+  for line in text.splitlines():
+   stripped=line.strip()
+   if stripped.startswith("["):
+    in_events=stripped.lower()=="[events]"
+    continue
+   if not in_events:continue
+   if stripped.lower().startswith("format:"):
+    format_fields=[f.strip().lower() for f in stripped.split(":",1)[1].split(",")]
+    continue
+   if not ASS_TEXT.match(line):continue
+   fields=line.split(":",1)[1].lstrip().split(",",len(format_fields)-1) if format_fields else []
+   if not fields or "start" not in format_fields or "end" not in format_fields:continue
+   start_index=format_fields.index("start");end_index=format_fields.index("end")
+   if len(fields)<=max(start_index,end_index):continue
+   a=timeline.stamp(fields[start_index]);b=timeline.stamp(fields[end_index])
+   if a is not None and b is not None and a<=window_end and b>=window_start:
+    selected.append(line)
+ return ("\\n\\n" if reference_ext in ("srt","vtt") else "\\n").join(selected)[:max_chars]
 
 def ai_batch(raw,offset=0,max_chars=12000):
  """Return a complete-line text window and next offset, without touching source bytes."""
