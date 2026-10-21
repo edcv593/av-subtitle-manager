@@ -347,10 +347,10 @@ async def discover_external(request:Request):
   if not number or (SKIP_C and marked(p.name)):raise HTTPException(400,"无法识别番号或影片已跳过")
   source=body.get("source")
   if source is not None and source not in external_providers.SITES:raise HTTPException(400,"未知字幕来源")
-  pages,errors,search_stats=await asyncio.to_thread(external_providers.native_search,number,fetch_site_search,source=source)
+  pages,errors,search_stats=await asyncio.to_thread(external_providers.native_search,number,fetch_site_search,12 if source=="JAV字幕" else 5,source)
   imported=[];seen=set();stats={k:{"pages":len(v),"download_links":0,"downloaded":0,"accepted":0,"rejected":0} for k,v in pages.items()}
   for source,urls in pages.items():
-   for page_url in urls[:3]:
+   for page_url in urls[:12 if source=="JAV字幕" else 3]:
     try:
      if source=="JAV字幕" and urllib.parse.urlsplit(page_url).path=="/api/download":
       links=[page_url]
@@ -366,6 +366,9 @@ async def discover_external(request:Request):
        raw=await asyncio.to_thread(fetch,link,LIMIT)
        stats[source]["downloaded"]+=1
        filename=Path(urllib.parse.urlsplit(link).path).name
+       if source=="JAV字幕" and urllib.parse.urlsplit(link).path=="/api/download":
+        params=urllib.parse.parse_qs(urllib.parse.urlsplit(link).query)
+        filename=number+"."+params.get("ext",["srt"])[0]
        if zipfile.is_zipfile(io.BytesIO(raw)):filename+=".zip"
        data,ext=extract_uploaded_subtitle(raw,filename,number)
        if not valid(data,ext):
