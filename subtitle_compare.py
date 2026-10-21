@@ -126,7 +126,7 @@ def ai_review(rows,api_key,model,endpoint,allowed_lines):
   raise ValueError("AI 返回空的校对内容（finish_reason="+str(reason)[:40]+"）；可能是模型未输出正文或输出长度不足")
  content=content.strip()
  if content.startswith("```"):
-  content=re.sub(r"^\x60{3}(?:json)?\\s*|\\s*\x60{3}$","",content,flags=re.I).strip()
+  content=re.sub(r"^```(?:json)?\s*|\s*```$","",content,flags=re.I).strip()
  try:parsed=json.loads(content)
  except ValueError as exc:raise ValueError("AI 校对正文不是有效 JSON，建议更换模型或增加输出额度") from exc
  if not isinstance(parsed,dict):raise ValueError("AI 校对结果必须是 JSON 对象")
