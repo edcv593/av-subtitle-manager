@@ -6,6 +6,7 @@ Unknown alignment is intentionally omitted rather than guessed.
 import re
 import json
 import urllib.request
+import urllib.error
 from pathlib import Path
 import timeline
 
@@ -103,9 +104,34 @@ def ai_review(rows,api_key,model,endpoint,allowed_lines):
          json.dumps(evidence,ensure_ascii=False))
  body=json.dumps({"model":model,"messages":[{"role":"user","content":prompt}],"response_format":{"type":"json_object"},"temperature":0.2,"max_tokens":1800}).encode("utf-8")
  req=urllib.request.Request(endpoint,data=body,headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
- with urllib.request.urlopen(req,timeout=45) as resp:response=json.loads(resp.read(120000))
- items=json.loads(response["choices"][0]["message"]["content"]).get("suggestions",[])
- if not isinstance(items,list):raise ValueError("AI 输出格式无效")
+ try:
+  with urllib.request.urlopen(req,timeout=45) as resp:
+   raw=resp.read(120000)
+ except urllib.error.HTTPError as exc:
+  if exc.code==401:raise ValueError("AI API Key 无效（HTTP 401）") from None
+  if exc.code==402:raise ValueError("AI 账户额度不足（HTTP 402）") from None
+  if exc.code==429:raise ValueError("AI 请求被限流（HTTP 429），请稍后重试") from None
+  raise ValueError("AI 服务返回 HTTP "+str(exc.code)) from None
+ except (urllib.error.URLError,TimeoutError) as exc:
+  raise ValueError("AI 服务网络连接或请求超时："+str(exc)[:100]) from None
+ if not raw.strip():raise ValueError("AI 服务返回空 HTTP 响应，请检查 API 地址和代理配置")
+ try:response=json.loads(raw)
+ except (ValueError,UnicodeError) as exc:raise ValueError("AI 服务返回非 JSON 内容，请检查 API 地址和服务商配置") from exc
+ if not isinstance(response,dict) or not isinstance(response.get("choices"),list) or not response["choices"]:
+  raise ValueError("AI 服务响应缺少 choices，请检查模型是否支持聊天接口")
+ choice=response["choices"][0]
+ content=choice.get("message",{}).get("content") if isinstance(choice,dict) else None
+ if not isinstance(content,str) or not content.strip():
+  reason=choice.get("finish_reason","unknown") if isinstance(choice,dict) else "unknown"
+  raise ValueError("AI 返回空的校对内容（finish_reason="+str(reason)[:40]+"）；可能是模型未输出正文或输出长度不足")
+ content=content.strip()
+ if content.startswith("```"):
+  content=re.sub(r"^\x60{3}(?:json)?\\s*|\\s*\x60{3}$","",content,flags=re.I).strip()
+ try:parsed=json.loads(content)
+ except ValueError as exc:raise ValueError("AI 校对正文不是有效 JSON，建议更换模型或增加输出额度") from exc
+ if not isinstance(parsed,dict):raise ValueError("AI 校对结果必须是 JSON 对象")
+ items=parsed.get("suggestions",[])
+ if not isinstance(items,list):raise ValueError("AI 建议列表格式无效")
  lookup={r["index"]:r for r in evidence}
  result=[];seen=set()
  for item in items[:10]:
