@@ -1033,12 +1033,46 @@ async function show(path,tr){
     let googleProgress=el("progress");googleProgress.max=100;googleProgress.value=0;googleProgress.style.width="100%";
     let googleProgressDetail=el("p","未开始");googleProgressDetail.className="muted";
     let googleSuggestions=el("div");let googlePreview=el("button","预览并生成独立中文字幕");googlePreview.disabled=true;
-    panel.append(googleBtn,googlePause,googleStatus,googleProgress,googleProgressDetail,googleSuggestions,googlePreview);
+    let googleRetry=el("button","重试翻译失败的条目");googleRetry.disabled=true;
+    let googleErrors=el("div");googleErrors.style.whiteSpace="pre-wrap";
+    panel.append(googleBtn,googlePause,googleStatus,googleProgress,googleProgressDetail,googleRetry,googleErrors,googleSuggestions,googlePreview);
     let googleRef=null,googleHash=null,googleEdits={},googleDone=false,googlePaused=false,googleBusy=false,googleTicker=null;
     const googleProgressUpdate=(done,total,failed,phase,startedAt)=>{
      googleProgress.max=Math.max(1,total||1);googleProgress.value=done||0;
      let sec=Math.floor((Date.now()-startedAt)/1000);
      googleProgressDetail.textContent=(done||0)+"/"+(total||"?")+" 条 · "+(total?Math.floor(done/total*100):0)+"% · 失败 "+(failed||0)+" 条 · 本次耗时 "+sec+" 秒 · "+phase;
+    };
+    const googleShowErrors=(state)=>{
+     let errors=state.error_details||[];
+     googleErrors.replaceChildren();
+     if(state.failures>0){
+      googleErrors.append(el("p","尚有 "+state.failures+" 条翻译失败，暂不允许生成中文字幕。"));
+      for(let f of errors.slice(0,15))googleErrors.append(el("p","第 "+f.cue+" 条："+f.reason));
+      if(state.failures>15)googleErrors.append(el("p","还有 "+(state.failures-15)+" 条未展示。"));
+     }
+     googleRetry.disabled=googleBusy||!(state.failures>0);
+    };
+    googleRetry.onclick=async()=>{
+     if(googleBusy||!referenceId)return;
+     googleBusy=true;googleRetry.disabled=true;googlePreview.disabled=true;
+     try{
+      let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId});
+      if(!v.failures)return;
+      if(!confirm("将重试 "+v.failures+" 条失败字幕，每批 2 条。Google 免费接口可能继续限流；再次失败会停止，避免重复请求。确认？"))return;
+      let rounds=0,remaining=v.failures;
+      while(remaining>0){
+       googleStatus.textContent="正在重试失败条目 · 剩余 "+remaining+" 条…";
+       let out=await api("/api/subtitles/translate/retry-failed","POST",{path,reference_id:referenceId});
+       remaining=out.remaining;rounds++;
+       if(!out.retried||!out.resolved||rounds>=100)break;
+      }
+      v=await api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId});
+      googleShowErrors(v);googleProgress.value=v.next_offset;
+      googleProgressDetail.textContent="NAS 草稿 "+v.next_offset+"/"+v.total+" 条 · 失败 "+v.failures+" 条";
+      googleStatus.textContent=v.failures?"重试结束，仍有 "+v.failures+" 条失败。可稍后继续重试。":"失败条目已清零；可点击继续翻译和 DeepSeek 校对。";
+      googleBtn.textContent="继续翻译";
+     }catch(e){googleStatus.textContent="重试失败："+e.message}
+     finally{googleBusy=false;googleRetry.disabled=false}
     };
     googlePause.onclick=()=>{googlePaused=true;googlePause.disabled=true;googleStatus.textContent="暂停已请求，等待当前字幕批次完成后停止。草稿会保留。"};
     googleBtn.onclick=async()=>{
@@ -1059,6 +1093,7 @@ async function show(path,tr){
       if(!googleRef.endsWith(".srt"))throw Error("Google 初译目前仅支持日语 SRT");
       progress=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});
       googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"读取已保存进度",startedAt);
+      googleShowErrors(progress);
       if(progress.done){googleStatus.textContent="已找到完成的翻译草稿，正在获取结果…";}
       let batch=null,round=0;
       while(!progress.done){
@@ -1072,6 +1107,7 @@ async function show(path,tr){
       }
       if(!batch)batch=await api("/api/subtitles/translate/google","POST",{path,reference_id:googleRef});
       googleHash=batch.draft_sha256;googleProgressUpdate(progress.next_offset,progress.total,progress.failures,"Google 初译完成",startedAt);
+      if(batch.failures){let v=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});googleShowErrors(v);googleStatus.textContent="初译处理完成，但 "+batch.failures+" 条失败。请先点击「重试翻译失败的条目」，暂不进入 AI 润色。";phase="等待处理失败条目";return}
       if(googlePaused){googleStatus.textContent="Google 初译已保存。再次点击继续进入 AI 润色。";googleBtn.textContent="继续润色";return}
       googleStatus.textContent="初译完成，失败 "+batch.failures+" 条（保留日语）；DeepSeek 润色开始…";
       let offset=0,roundAI=0,polishError="";
@@ -1099,12 +1135,14 @@ async function show(path,tr){
       if(googleTicker)clearInterval(googleTicker);googleTicker=null;
       googleProgressUpdate(progress.next_offset,progress.total,progress.failures,googlePaused?"已暂停":phase,startedAt);
       googleBusy=false;googleBtn.disabled=false;googlePause.disabled=true;
+      if(progress.failures)googleRetry.disabled=false;
      }
     };
     if(referenceId&&referenceId.endsWith(".srt")){
      api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId}).then(v=>{
       googleProgress.max=Math.max(1,v.total);googleProgress.value=v.next_offset;
       googleProgressDetail.textContent="NAS 草稿："+v.next_offset+"/"+v.total+" 条 · 失败 "+v.failures+" 条"+(v.done?" · 初译已完成":" · 点击继续翻译");
+      googleShowErrors(v);
       googleStatus.textContent=v.started?"已恢复 NAS 之前保存的初译进度":"参考字幕已恢复，等待开始翻译";
       googleBtn.textContent=v.started?"继续翻译":"Google 免费初译 → DeepSeek 润色";
      }).catch(e=>{googleStatus.textContent="读取历史进度失败："+e.message});
