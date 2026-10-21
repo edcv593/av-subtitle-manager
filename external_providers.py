@@ -153,6 +153,29 @@ def avsubtitles_reference_downloads(url,page,max_links=8):
  return links
 
 
+def subtitlecat_japanese_downloads(url,page,max_links=6):
+ """Return only explicit Japanese downloads on a Subtitle Cat detail page.
+
+ The language button alone does not prove a subtitle is Japanese; caller must
+ inspect the actual downloaded cue text before accepting it as reference.
+ """
+ parsed=urllib.parse.urlsplit(url)
+ if parsed.scheme!="https" or parsed.hostname not in ("subtitlecat.com","www.subtitlecat.com") or parsed.port not in (None,443) or parsed.username or parsed.password:
+  raise ValueError("不是可信的 Subtitle Cat 页面")
+ if not re.fullmatch(r"/subs/[0-9]+/[^/?#]+[.]html",parsed.path,re.I):raise ValueError("不是 Subtitle Cat 字幕详情页")
+ source=html.unescape(page.decode("utf-8","replace")).replace("\\/","/")
+ parser=SearchLinks();parser.feed(source)
+ links=[]
+ for href,label in parser.links:
+  target=urllib.parse.urljoin(url,html.unescape(href))
+  dest=urllib.parse.urlsplit(target)
+  if dest.scheme!="https" or dest.hostname not in ("subtitlecat.com","www.subtitlecat.com") or dest.port not in (None,443) or dest.username or dest.password:continue
+  if not re.search(r"(^|[/_.-])(ja|jpn|japanese)([/_.-]|$)",urllib.parse.unquote(dest.path)+" "+label,re.I):continue
+  if not re.search(r"/download/|[.]srt$|[.]zip$",dest.path,re.I):continue
+  if target not in links:links.append(target)
+  if len(links)>=max_links:break
+ return links
+
 def native_search(number,fetch_text,max_pages=5,source=None):
  """Search each provider's own HTML results, without Bing or fabricated matches."""
  found={};errors={};stats={}
