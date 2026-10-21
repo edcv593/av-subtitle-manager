@@ -72,6 +72,21 @@ class ReferenceSubtitleTests(unittest.TestCase):
   result=opt.reference_for_window(chinese,"srt",japanese,"srt",offset=offset)
   self.assertIn("日本語二",result)
   self.assertNotIn("日本語一",result)
+ def test_utf16_reference_text(self):
+  raw="1\n00:00:01,000 --> 00:00:02,000\nこんにちは\n".encode("utf-16")
+  self.assertIn("こんにちは",reference_excerpt(raw,"srt"))
+  self.assertIn("こんにちは",opt.reference_for_window(SRT,"srt",raw,"srt"))
+ def test_gb18030_reference_text(self):
+  raw="1\n00:00:01,000 --> 00:00:02,000\n原语言参考\n".encode("gb18030")
+  self.assertIn("原语言参考",reference_excerpt(raw,"srt"))
+ def test_ass_reference_custom_format(self):
+  raw=("[Script Info]\nTitle: Japanese\n[Events]\n"
+       "Format: Layer, End, Start, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+       "Dialogue: 0,0:00:02.00,0:00:01.00,Default,,0,0,0,,近い\n"
+       "Dialogue: 0,0:20:02.00,0:20:01.00,Default,,0,0,0,,遠い\n").encode()
+  excerpt=opt.reference_for_window(SRT,"srt",raw,"ass")
+  self.assertIn("近い",excerpt)
+  self.assertNotIn("遠い",excerpt)
  def test_reject_invalid_reference(self):
   with self.assertRaises(ValueError):reference_excerpt(b"hello","srt")
 
