@@ -899,13 +899,13 @@ async function scan(){try{let r=await api("/api/scan","POST");msg(r.ok?"扫描�
 async function retry(path){try{await api("/api/retry","POST",{path});load()}catch(e){msg(e.message)}}
 async function runWorkflow(path,tr,button){
  button.disabled=true;button.textContent="处理中…";
- let banner=el("div");banner.className="workflow-progress";banner.textContent="正在检查影片和字幕状态…";
+ let banner=el("tr");banner.id="activeWorkflowProgress";let progressCell=el("td","正在检查影片和字幕状态…");progressCell.colSpan=4;progressCell.className="workflow-progress";banner.append(progressCell);
  let prev=document.getElementById("activeWorkflowProgress");if(prev)prev.remove();
  banner.id="activeWorkflowProgress";tr.after(banner);
  try{
   let plan=await api("/api/workflow/plan","POST",{path});
   let steps=plan.steps.map(x=>x.title).join(" → ");
-  banner.textContent="处理路线："+steps;
+  progressCell.textContent="处理路线："+steps;
   if(plan.action==="blocked"||plan.action==="no_code"){button.textContent="需要人工处理";return}
   if(plan.action==="search"){
    let sites=["AVSubtitles","Subtitle Cat","JAV字幕"],accepted=0,failures=[];
