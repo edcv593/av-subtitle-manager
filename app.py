@@ -581,7 +581,7 @@ async def translate_google_batch(request:Request):
   p=video(c,str(body.get("path","")))
   if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
   reference_id=body.get("reference_id","")
-  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"当前免费翻译仅支持 SRT 日语参考字幕")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"当前免费翻译仅支持 SRT 日语参考字幕")
   source=DATA/"reference_subtitles"/reference_id
   if not source.is_file() or source.stat().st_size>LIMIT:raise HTTPException(404,"参考字幕不存在")
   raw=source.read_bytes()
@@ -613,7 +613,7 @@ async def translate_polish_batch(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
-  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
   state_path=translation_draft_path(p,reference_id)
   if not state_path.is_file():raise HTTPException(404,"请先完成 Google 初译")
   state=json.loads(state_path.read_text("utf-8"))
@@ -639,7 +639,7 @@ async def translate_preview(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
-  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
   state_path=translation_draft_path(p,reference_id)
   if not state_path.is_file():raise HTTPException(404,"翻译草稿不存在")
   state=json.loads(state_path.read_text("utf-8"))
@@ -659,7 +659,7 @@ async def translate_save(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
-  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
   state_path=translation_draft_path(p,reference_id)
   if not state_path.is_file():raise HTTPException(404,"翻译草稿不存在")
   state=json.loads(state_path.read_text("utf-8"))
