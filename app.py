@@ -1143,10 +1143,10 @@ async function show(path,tr){
     let compareState=el("p","等待参考字幕");let compareResults=el("div");
     let compareProgress=el("progress");compareProgress.max=1;compareProgress.value=0;compareProgress.style.width="100%";
     let compareStats=el("p","尚未开始");compareStats.className="muted";
-    let compareIds=[],compareOffset=0,compareSha=null,compareBusy=false,compareStop=false,compareCount=0,compareMatched=0,compareTotal=0;
+    let compareIds=[],compareOffset=0,compareSha=null,compareBusy=false,compareStop=false,compareCount=0,compareMatched=0,compareTotal=0,compareSuggestions=[];
     const compareStorage="subtitle_compare_progress:"+path;
     const compareLoad=()=>{try{return JSON.parse(sessionStorage.getItem(compareStorage)||"null")}catch(e){return null}};
-    const compareSave=(ids)=>{sessionStorage.setItem(compareStorage,JSON.stringify({ids,offset:compareOffset,sha:compareSha,count:compareCount,matched:compareMatched,total:compareTotal}))};
+    const compareSave=(ids)=>{sessionStorage.setItem(compareStorage,JSON.stringify({ids,offset:compareOffset,sha:compareSha,count:compareCount,matched:compareMatched,total:compareTotal,suggestions:compareSuggestions}))};
     let oldCompare=compareLoad();
     if(oldCompare&&oldCompare.offset>0){compareResume.disabled=false;compareState.textContent="检测到上次进度："+oldCompare.offset+"/"+oldCompare.total+" 条，可继续扫描。历史建议仅保存在当前页面，刷新后需重新审核。"}
     compareBox.append(compareInput,compareUpload,compareStart,compareNext,compareResume,compareProgress,compareStats,compareState,compareResults);panel.append(compareBox);
@@ -1183,11 +1183,11 @@ async function show(path,tr){
      if(!resume&&!confirm("自动逐批校对整部中文字幕，向 AI 发送匹配的字幕文本。仅收集建议，不会自动勾选或保存。是否开始？"))return;
      if(!resume){
       compareOffset=0;compareSha=null;compareCount=0;compareMatched=0;compareTotal=0;
-      compareResults.replaceChildren();sessionStorage.removeItem(compareStorage);
+      compareResults.replaceChildren();compareSuggestions=[];sessionStorage.removeItem(compareStorage);
      }else{
       if(!previous){compareState.textContent="没有可恢复的校对进度";return}
       compareOffset=previous.offset;compareSha=previous.sha;compareCount=previous.count||0;
-      compareMatched=previous.matched||0;compareTotal=previous.total||0;
+      compareMatched=previous.matched||0;compareTotal=previous.total||0;compareSuggestions=previous.suggestions||[];
      }
      compareBusy=true;compareStop=false;compareStart.disabled=true;compareResume.disabled=true;compareNext.disabled=false;
      let failures=0;
@@ -1210,6 +1210,7 @@ async function show(path,tr){
        compareMatched+=out.matched;compareCount+=(out.suggestions||[]).length;
        compareProgress.max=Math.max(1,compareTotal);compareProgress.value=compareOffset;
        compareStats.textContent="进度 "+compareOffset+"/"+compareTotal+" · 匹配 "+compareMatched+" 条 · 建议 "+compareCount+" 条";
+       compareSuggestions.push(...(out.suggestions||[]));
        for(let suggestion of out.suggestions||[]){
         let item=el("div");item.style.borderBottom="1px solid #e4e7ed";item.style.padding="8px 0";
         let check=el("input");check.type="checkbox";
