@@ -10,6 +10,7 @@ import subtitle_files
 import subtitle_quality
 import external_providers
 import subtitle_optimizer
+import ai_provider_settings
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
 TOKEN=os.getenv("WEB_TOKEN","");AUTO=os.getenv("AUTO_DOWNLOAD","true").lower()=="true"
 INTERVAL=max(1,int(os.getenv("SCAN_HOURS","6")))*3600;RETRY=max(1,int(os.getenv("RETRY_HOURS","24")))*3600
@@ -470,6 +471,27 @@ async def optimize_apply(request:Request):
    reset_retry(c,p);record(c,p,code(p.name),"existing","Optimized subtitle | backup="+backup.name)
    return {"ok":True,"file":saved.name,"backup":backup.name,"changed":len(changes),"timeline_unchanged":True}
   except (OSError,ValueError,UnicodeError) as exc:raise HTTPException(422,str(exc)[:180])
+@app.get("/api/settings/ai")
+def get_ai_settings(request:Request):
+ auth(request)
+ return ai_provider_settings.public(DATA)
+@app.post("/api/settings/ai")
+async def set_ai_settings(request:Request):
+ auth(request);body=await request.json()
+ try:
+  return ai_provider_settings.save(DATA,body.get("provider","deepseek"),body.get("model",""),body.get("api_key"),bool(body.get("clear_key",False)))
+ except (ValueError,OSError) as exc:raise HTTPException(422,str(exc)[:180])
+@app.post("/api/settings/ai/test")
+async def test_ai_settings(request:Request):
+ auth(request)
+ try:
+  key,model,endpoint=ai_provider_settings.credentials(DATA)
+  if not key:raise ValueError("请先保存 API Key")
+  req=urllib.request.Request(endpoint,data=json.dumps({"model":model,"messages":[{"role":"user","content":"请仅回复 OK"}],"max_tokens":20,"stream":False}).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+  with urllib.request.urlopen(req,timeout=25) as resp:
+   result=json.loads(resp.read(20000))
+  return {"ok":bool(result.get("choices")),"message":"服务商返回有效响应" if result.get("choices") else "服务商未返回结果"}
+ except Exception as exc:raise HTTPException(502,"连接测试失败："+str(exc)[:150])
 @app.post("/api/subtitles/optimize/ai")
 async def optimize_ai(request:Request):
  auth(request);body=await request.json()
@@ -479,10 +501,10 @@ async def optimize_ai(request:Request):
   if len(files)!=1:raise HTTPException(409,"必须恰好有一份外挂字幕")
   target=files[0]
   if target.stat().st_size>LIMIT:raise HTTPException(413,"字幕文件过大")
-  key=os.getenv("SUBTITLE_AI_API_KEY","")
-  if not key:raise HTTPException(503,"未配置 SUBTITLE_AI_API_KEY；AI 润色默认关闭")
+  key,model,endpoint=ai_provider_settings.credentials(DATA)
+  if not key:raise HTTPException(503,"请先在网页 AI 设置中保存 API Key")
   try:
-   suggestions=subtitle_optimizer.ai_suggestions(target.read_bytes(),target.suffix.lower().lstrip("."),key,os.getenv("SUBTITLE_AI_MODEL","gpt-4o-mini"))
+   suggestions=subtitle_optimizer.ai_suggestions(target.read_bytes(),target.suffix.lower().lstrip("."),key,model,endpoint)
    return {"suggestions":suggestions,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
   except Exception as exc:raise HTTPException(502,"AI 建议失败："+str(exc)[:160])
 @app.post("/api/candidates/quality")
