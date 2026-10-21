@@ -11,6 +11,8 @@ import subtitle_quality
 import external_providers
 import subtitle_optimizer
 import subtitle_google
+import subtitle_deepl
+import deepl_settings
 import workflow_plan
 import ai_provider_settings
 MEDIA=Path(os.getenv("MEDIA_ROOT","/media"));DATA=Path(os.getenv("DATA_ROOT","/data"));DATA.mkdir(parents=True,exist_ok=True)
@@ -511,6 +513,26 @@ async def test_ai_settings(request:Request):
    result=json.loads(resp.read(20000))
   return {"ok":bool(result.get("choices")),"message":"服务商返回有效响应" if result.get("choices") else "服务商未返回结果"}
  except Exception as exc:raise HTTPException(502,"连接测试失败："+str(exc)[:150])
+@app.get("/api/settings/deepl")
+def get_deepl_settings(request:Request):
+ auth(request)
+ return deepl_settings.public(DATA)
+
+@app.post("/api/settings/deepl")
+async def set_deepl_settings(request:Request):
+ auth(request);body=await request.json()
+ try:return deepl_settings.save(DATA,body.get("plan","free"),body.get("api_key"),bool(body.get("clear_key",False)))
+ except (ValueError,OSError) as exc:raise HTTPException(422,str(exc)[:180])
+
+@app.post("/api/settings/deepl/test")
+async def test_deepl_settings(request:Request):
+ auth(request)
+ try:
+  key,plan=deepl_settings.credentials(DATA)
+  result=await asyncio.to_thread(subtitle_deepl.translate,"こんにちは",key,plan)
+  return {"ok":True,"message":"DeepL 测试成功："+result[:60]}
+ except Exception as exc:raise HTTPException(502,"DeepL 连接测试失败："+str(exc)[:140])
+
 @app.post("/api/subtitles/reference/upload")
 async def upload_reference_subtitle(request:Request,path:str,filename:str):
  auth(request)
@@ -584,8 +606,10 @@ async def auto_reference_subtitle(request:Request):
    except Exception as exc:errors.append("详情页读取失败："+str(exc)[:100])
   return {"reference_id":None,"details_found":len(detail_urls),"errors":errors[:12],"notice":"未能自动获取有效日语字幕；可能是网站超时、下载需要会话或没有可解析的链接"}
 
-def translation_draft_path(video_path,reference_id):
- key=hashlib.sha256((str(video_path)+"|"+reference_id).encode()).hexdigest()
+def translation_draft_path(video_path,reference_id,provider="google"):
+ if provider not in ("google","deepl"):raise ValueError("翻译引擎无效")
+ salt="" if provider=="google" else "|deepl"
+ key=hashlib.sha256((str(video_path)+"|"+reference_id+salt).encode()).hexdigest()
  return DATA/"translation_drafts"/(key+".json")
 
 @app.post("/api/subtitles/translate/status")
@@ -595,6 +619,8 @@ async def translate_google_status(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
+  provider=body.get("provider","google")
+  if provider not in ("google","deepl"):raise HTTPException(400,"翻译引擎无效")
   if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):
    raise HTTPException(400,"参考字幕标识无效")
   source=DATA/"reference_subtitles"/reference_id
@@ -603,14 +629,14 @@ async def translate_google_status(request:Request):
   if hashlib.sha256(raw).hexdigest()!=reference_id.split(".")[0]:raise HTTPException(409,"日语参考字幕已变化")
   total=len(timeline.cues(raw,"srt") or [])
   if not total:raise HTTPException(422,"参考字幕时间轴无效")
-  state_path=translation_draft_path(p,reference_id)
+  state_path=translation_draft_path(p,reference_id,provider)
   if not state_path.exists():
-   return {"next_offset":0,"total":total,"failures":0,"done":False,"started":False,"error_details":[]}
+   return {"next_offset":0,"total":total,"failures":0,"done":False,"started":False,"error_details":[],"provider":provider}
   state=json.loads(state_path.read_text("utf-8"))
   if state.get("source_sha256")!=hashlib.sha256(raw).hexdigest():raise HTTPException(409,"翻译源文件已变化")
   completed=state.get("offset",0)
   if not isinstance(completed,int) or completed<0 or completed>total:raise HTTPException(409,"翻译进度文件无效")
-  return {"next_offset":completed,"total":total,"failures":len(state.get("failures",[])),"done":completed>=total,"started":True,"error_details":state.get("failures",[])[:30]}
+  return {"next_offset":completed,"total":total,"failures":len(state.get("failures",[])),"done":completed>=total,"started":True,"error_details":state.get("failures",[])[:30],"provider":provider}
 
 @app.post("/api/subtitles/translate/google")
 async def translate_google_batch(request:Request):
@@ -620,13 +646,15 @@ async def translate_google_batch(request:Request):
   p=video(c,str(body.get("path","")))
   if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
   reference_id=body.get("reference_id","")
+  provider=body.get("provider","google")
+  if provider not in ("google","deepl"):raise HTTPException(400,"翻译引擎无效")
   if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"当前免费翻译仅支持 SRT 日语参考字幕")
   source=DATA/"reference_subtitles"/reference_id
   if not source.is_file() or source.stat().st_size>LIMIT:raise HTTPException(404,"参考字幕不存在")
   raw=source.read_bytes()
   if hashlib.sha256(raw).hexdigest()!=reference_id.split(".")[0]:raise HTTPException(409,"参考字幕内容已变化")
   if not timeline.cues(raw,"srt"):raise HTTPException(422,"参考字幕时间轴无效")
-  state_path=translation_draft_path(p,reference_id);state_path.parent.mkdir(parents=True,exist_ok=True)
+  state_path=translation_draft_path(p,reference_id,provider);state_path.parent.mkdir(parents=True,exist_ok=True)
   restart=body.get("restart") is True
   if state_path.exists() and not restart:
    state=json.loads(state_path.read_text("utf-8"))
@@ -637,7 +665,12 @@ async def translate_google_batch(request:Request):
   if state["offset"]>=len(timeline.cues(raw,"srt")):
    return {"done":True,"next_offset":state["offset"],"total":state["offset"],"failures":len(state["failures"]),"draft_sha256":subtitle_optimizer.digest(state["draft"].encode()),"notice":"初译已完成"}
   try:
-   out=await asyncio.to_thread(subtitle_google.translate_srt,state["draft"].encode("utf-8"),state["offset"],2)
+   if provider=="deepl":
+    key,plan=deepl_settings.credentials(DATA)
+    translator=lambda text:subtitle_deepl.translate(text,key,plan)
+    out=await asyncio.to_thread(subtitle_google.translate_srt,state["draft"].encode("utf-8"),state["offset"],2,translator)
+   else:
+    out=await asyncio.to_thread(subtitle_google.translate_srt,state["draft"].encode("utf-8"),state["offset"],2)
    if timeline.cues(raw,"srt")!=timeline.cues(out["translated_text"].encode("utf-8"),"srt"):raise ValueError("时间轴发生变化")
    state["draft"]=out["translated_text"];state["offset"]=out["next_offset"]
    state["failures"].extend(out["failed"])
@@ -652,8 +685,10 @@ async def translate_retry_failed(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
+  provider=body.get("provider","google")
+  if provider not in ("google","deepl"):raise HTTPException(400,"翻译引擎无效")
   if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
-  state_path=translation_draft_path(p,reference_id)
+  state_path=translation_draft_path(p,reference_id,provider)
   source=DATA/"reference_subtitles"/reference_id
   if not state_path.is_file() or not source.is_file():raise HTTPException(404,"翻译草稿或日语字幕不存在")
   state=json.loads(state_path.read_text("utf-8"))
@@ -661,7 +696,12 @@ async def translate_retry_failed(request:Request):
   if hashlib.sha256(original).hexdigest()!=state.get("source_sha256"):raise HTTPException(409,"源字幕已变化")
   if not state.get("failures"):return {"remaining":0,"retried":0,"resolved":0,"error_details":[]}
   try:
-   result=await asyncio.to_thread(subtitle_google.retry_failed_srt,state["draft"].encode("utf-8"),original,state["failures"],2)
+   if provider=="deepl":
+    key,plan=deepl_settings.credentials(DATA)
+    translator=lambda text:subtitle_deepl.translate(text,key,plan)
+    result=await asyncio.to_thread(subtitle_google.retry_failed_srt,state["draft"].encode("utf-8"),original,state["failures"],2,translator)
+   else:
+    result=await asyncio.to_thread(subtitle_google.retry_failed_srt,state["draft"].encode("utf-8"),original,state["failures"],2)
    new_text=result["translated_text"]
    if timeline.cues(original,"srt")!=timeline.cues(new_text.encode("utf-8"),"srt"):raise ValueError("重试后时间轴变化")
    state["draft"]=new_text;state["failures"]=result["remaining"]
@@ -676,8 +716,10 @@ async def translate_polish_batch(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
+  provider=body.get("provider","google")
+  if provider not in ("google","deepl"):raise HTTPException(400,"翻译引擎无效")
   if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
-  state_path=translation_draft_path(p,reference_id)
+  state_path=translation_draft_path(p,reference_id,provider)
   if not state_path.is_file():raise HTTPException(404,"请先完成 Google 初译")
   state=json.loads(state_path.read_text("utf-8"))
   raw=state["draft"].encode("utf-8")
@@ -702,8 +744,10 @@ async def translate_preview(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
+  provider=body.get("provider","google")
+  if provider not in ("google","deepl"):raise HTTPException(400,"翻译引擎无效")
   if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
-  state_path=translation_draft_path(p,reference_id)
+  state_path=translation_draft_path(p,reference_id,provider)
   if not state_path.is_file():raise HTTPException(404,"翻译草稿不存在")
   state=json.loads(state_path.read_text("utf-8"))
   original=(DATA/"reference_subtitles"/reference_id).read_bytes()
@@ -723,8 +767,10 @@ async def translate_save(request:Request):
  with db() as c:
   p=video(c,str(body.get("path","")))
   reference_id=body.get("reference_id","")
+  provider=body.get("provider","google")
+  if provider not in ("google","deepl"):raise HTTPException(400,"翻译引擎无效")
   if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
-  state_path=translation_draft_path(p,reference_id)
+  state_path=translation_draft_path(p,reference_id,provider)
   if not state_path.is_file():raise HTTPException(404,"翻译草稿不存在")
   state=json.loads(state_path.read_text("utf-8"))
   original=(DATA/"reference_subtitles"/reference_id).read_bytes()
