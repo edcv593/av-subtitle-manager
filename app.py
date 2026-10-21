@@ -605,12 +605,12 @@ async def translate_google_status(request:Request):
   if not total:raise HTTPException(422,"参考字幕时间轴无效")
   state_path=translation_draft_path(p,reference_id)
   if not state_path.exists():
-   return {"next_offset":0,"total":total,"failures":0,"done":False,"started":False}
+   return {"next_offset":0,"total":total,"failures":0,"done":False,"started":False,"error_details":[]}
   state=json.loads(state_path.read_text("utf-8"))
   if state.get("source_sha256")!=hashlib.sha256(raw).hexdigest():raise HTTPException(409,"翻译源文件已变化")
   completed=state.get("offset",0)
   if not isinstance(completed,int) or completed<0 or completed>total:raise HTTPException(409,"翻译进度文件无效")
-  return {"next_offset":completed,"total":total,"failures":len(state.get("failures",[])),"done":completed>=total,"started":True}
+  return {"next_offset":completed,"total":total,"failures":len(state.get("failures",[])),"done":completed>=total,"started":True,"error_details":state.get("failures",[])[:30]}
 
 @app.post("/api/subtitles/translate/google")
 async def translate_google_batch(request:Request):
@@ -643,6 +643,30 @@ async def translate_google_batch(request:Request):
    state["failures"].extend(out["failed"])
    tmp=state_path.with_suffix(".tmp");tmp.write_text(json.dumps(state,ensure_ascii=False),"utf-8");tmp.replace(state_path)
    return {"done":out["done"],"next_offset":out["next_offset"],"total":out["total"],"translated":len(out["changes"]),"failures":len(state["failures"]),"draft_sha256":subtitle_optimizer.digest(state["draft"].encode()),"notice":"Google 初译草稿已暂存，失败台词保留原日语"}
+  except (ValueError,OSError) as exc:raise HTTPException(502,str(exc)[:180])
+
+@app.post("/api/subtitles/translate/retry-failed")
+async def translate_retry_failed(request:Request):
+ """Retry up to two failed cues; never overwrite successful translated lines."""
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  reference_id=body.get("reference_id","")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):raise HTTPException(400,"参考字幕标识无效")
+  state_path=translation_draft_path(p,reference_id)
+  source=DATA/"reference_subtitles"/reference_id
+  if not state_path.is_file() or not source.is_file():raise HTTPException(404,"翻译草稿或日语字幕不存在")
+  state=json.loads(state_path.read_text("utf-8"))
+  original=source.read_bytes()
+  if hashlib.sha256(original).hexdigest()!=state.get("source_sha256"):raise HTTPException(409,"源字幕已变化")
+  if not state.get("failures"):return {"remaining":0,"retried":0,"resolved":0,"error_details":[]}
+  try:
+   result=await asyncio.to_thread(subtitle_google.retry_failed_srt,state["draft"].encode("utf-8"),original,state["failures"],2)
+   new_text=result["translated_text"]
+   if timeline.cues(original,"srt")!=timeline.cues(new_text.encode("utf-8"),"srt"):raise ValueError("重试后时间轴变化")
+   state["draft"]=new_text;state["failures"]=result["remaining"]
+   tmp=state_path.with_suffix(".tmp");tmp.write_text(json.dumps(state,ensure_ascii=False),"utf-8");tmp.replace(state_path)
+   return {"remaining":len(state["failures"]),"retried":result["attempted"],"resolved":len(result["resolved"]),"error_details":state["failures"][:30]}
   except (ValueError,OSError) as exc:raise HTTPException(502,str(exc)[:180])
 
 @app.post("/api/subtitles/translate/polish")
@@ -685,6 +709,7 @@ async def translate_preview(request:Request):
   original=(DATA/"reference_subtitles"/reference_id).read_bytes()
   if hashlib.sha256(original).hexdigest()!=state["source_sha256"]:raise HTTPException(409,"原字幕已变化")
   if state["offset"]<len(timeline.cues(original,"srt")):raise HTTPException(409,"翻译尚未完成")
+  if state.get("failures"):raise HTTPException(409,"仍有翻译失败条目，请先重试失败字幕")
   raw=state["draft"].encode("utf-8")
   try:
    optimized,changes=subtitle_optimizer.optimize(raw,"srt",False,False,body.get("replacements",{}))
@@ -704,6 +729,7 @@ async def translate_save(request:Request):
   state=json.loads(state_path.read_text("utf-8"))
   original=(DATA/"reference_subtitles"/reference_id).read_bytes()
   if hashlib.sha256(original).hexdigest()!=state["source_sha256"] or state["offset"]<len(timeline.cues(original,"srt")):raise HTTPException(409,"原字幕已变化或翻译尚未完成")
+  if state.get("failures"):raise HTTPException(409,"仍有翻译失败条目，禁止生成不完整中文字幕")
   raw=state["draft"].encode("utf-8")
   if subtitle_optimizer.digest(raw)!=body.get("draft_sha256"):raise HTTPException(409,"草稿已变化，请重新预览")
   try:
