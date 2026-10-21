@@ -87,18 +87,22 @@ def reference_excerpt(raw,ext,max_chars=6000):
  text=raw.decode("utf-8-sig","replace")
  return text[:max_chars]
 
-def reference_for_window(raw,ext,reference_raw,reference_ext,max_chars=6000):
+def reference_for_window(raw,ext,reference_raw,reference_ext,max_chars=6000,offset=0):
  """Select reference cues by overlapping timestamps, not by the first N characters."""
  import timeline
  source=timeline.cues(raw,ext)
  reference_times=timeline.cues(reference_raw,reference_ext)
  if not source or not reference_times:raise ValueError("字幕时间轴无效")
- # The Chinese sample sent to AI is bounded to 12000 characters.
- sample=raw.decode("utf-8-sig","replace")[:12000]
- sampled_times=timeline.cues(sample.encode("utf-8"),ext)
- if not sampled_times:
-  # A truncated ASS/SRT final cue can be incomplete; fall back to the first full cues.
-  sampled_times=source[:max(1,min(len(source),30))]
+ sample,next_offset,_=ai_batch(raw,offset)
+ prefix=raw.decode("utf-8-sig","replace")[:offset]
+ if ext in ("srt","vtt"):
+  count=lambda value:sum(1 for line in value.splitlines() if "-->" in line)
+ else:
+  count=lambda value:sum(1 for line in value.splitlines() if ASS_TEXT.match(line))
+ start_index=count(prefix)
+ sample_count=count(sample)
+ sampled_times=source[start_index:start_index+sample_count]
+ if not sampled_times:raise ValueError("当前批次缺少可匹配的字幕时间轴")
  window_start=min(a for a,_ in sampled_times)
  window_end=max(b for _,b in sampled_times)
  text=reference_raw.decode("utf-8-sig","replace")
