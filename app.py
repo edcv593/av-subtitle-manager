@@ -10,6 +10,7 @@ import subtitle_files
 import subtitle_quality
 import external_providers
 import subtitle_optimizer
+import subtitle_compare
 import subtitle_google
 import subtitle_deepl
 import deepl_settings
@@ -789,6 +790,57 @@ async def translate_save(request:Request):
    return {"ok":True,"file":target.name,"notice":"已生成独立中文字幕，未覆盖其他字幕"}
   except HTTPException:raise
   except (OSError,ValueError) as exc:raise HTTPException(422,str(exc)[:180])
+
+@app.post("/api/subtitles/compare/review")
+async def compare_subtitle_review(request:Request):
+ """Review existing Chinese subtitles against up to three aligned text references."""
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  if SKIP_C and marked(p.name):raise HTTPException(400,"-C 影片不允许修改")
+  files=subtitle_files.subtitles_for(p)
+  if len(files)!=1:raise HTTPException(409,"当前智能校对要求恰好一份外挂中文字幕")
+  main=files[0];ext=main.suffix.lower().lstrip(".")
+  if main.stat().st_size>LIMIT:raise HTTPException(413,"主字幕过大")
+  raw=main.read_bytes()
+  digest=subtitle_optimizer.digest(raw)
+  if body.get("original_sha256") and body["original_sha256"]!=digest:raise HTTPException(409,"主字幕已变化，请重新校对")
+  try:
+   main_entries=subtitle_compare.entries(raw,ext)
+   if sum(bool(subtitle_compare.HAN.search(x["text"])) for x in main_entries)<max(1,len(main_entries)//3):
+    raise ValueError("主字幕不像简体中文字幕，不允许当作中文进行校对")
+   ids=body.get("reference_ids",[])
+   if not isinstance(ids,list) or len(ids)>3:raise ValueError("最多三个参考字幕")
+   if len(ids)!=len(set(ids)):raise ValueError("参考字幕重复")
+   offset=body.get("offset",0)
+   shifts=body.get("shifts",{})
+   if not isinstance(shifts,dict):raise ValueError("时间偏移设置无效")
+   refs=[]
+   for identifier in ids:
+    if not isinstance(identifier,str) or not re.fullmatch(r"[0-9a-f]{64}\.(srt|vtt|ass|ssa)",identifier):raise ValueError("参考字幕标识无效")
+    source=DATA/"reference_subtitles"/identifier
+    if not source.is_file() or source.stat().st_size>LIMIT:raise ValueError("参考字幕不存在或过大")
+    contents=source.read_bytes()
+    if hashlib.sha256(contents).hexdigest()!=identifier.split(".")[0]:raise ValueError("参考字幕完整性校验失败")
+    shift=shifts.get(identifier,0)
+    if not isinstance(shift,(int,float)) or isinstance(shift,bool):raise ValueError("时间偏移值无效")
+    refs.append((identifier,contents,source.suffix.lower().lstrip("."),shift))
+   if not refs:raise ValueError("请先上传日语原生字幕或其他中文参考字幕")
+   batch=subtitle_compare.review_batch(raw,ext,refs,offset=offset,max_cues=25)
+   batch["original_sha256"]=digest
+   batch["subtitle"]=main.name
+   batch["matched"]=sum(bool(x["references"]) for x in batch["rows"])
+   batch["notice"]="仅使用文本和有时间重叠的参考证据；不读取视频，不自动修改。匹配不足的条目不产生 AI 建议。"
+   if body.get("ai",False):
+    key,model,endpoint=ai_provider_settings.credentials(DATA)
+    if not key:raise ValueError("请先在 AI 设置中保存 DeepSeek API Key")
+    # Existing replacement engine modifies unique whole text lines only.
+    lines=raw.decode("utf-8-sig","replace").splitlines()
+    batch["suggestions"]=await asyncio.to_thread(subtitle_compare.ai_review,batch["rows"],key,model,endpoint,lines)
+   return batch
+  except HTTPException:raise
+  except (ValueError,UnicodeError,OSError) as exc:raise HTTPException(422,str(exc)[:200])
+  except Exception as exc:raise HTTPException(502,"智能校对请求失败："+str(exc)[:160])
 
 @app.post("/api/subtitles/optimize/ai")
 async def optimize_ai(request:Request):
