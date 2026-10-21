@@ -93,6 +93,17 @@ def action(c,id,command):
  c.commit()
  return summarize(c.execute("SELECT * FROM review_jobs WHERE id=?",(id,)).fetchone())
 
+def retry_legacy_subtitle_selection(c,paths):
+ """Retry only previously blocked jobs caused by the old single-sidecar rule."""
+ count=0
+ for path in dict.fromkeys(paths):
+  row=c.execute("SELECT id FROM review_jobs WHERE video_path=? AND status='reviewing' AND error LIKE '需要恰好一份外挂中文字幕%' ORDER BY id DESC LIMIT 1",(path,)).fetchone()
+  if not row:continue
+  c.execute("UPDATE review_jobs SET status='pending',error='',phase='',updated=? WHERE id=?",(time.time(),row["id"]))
+  count+=1
+ c.commit()
+ return count
+
 def recover(c):
  # An interrupted running batch can be retried safely from its last checkpoint.
  c.execute("UPDATE review_jobs SET status='pending',updated=? WHERE status='running'",(time.time(),))
