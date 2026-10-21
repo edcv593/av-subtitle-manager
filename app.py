@@ -915,7 +915,7 @@ async function pollStatus(){
   msg(scanInfo(s));
   let stats=document.getElementById("stats");stats.replaceChildren();
   for(let [k,n] of Object.entries(s.counts)){let d=el("div",k+": "+n);d.className="stat";stats.append(d)}
-  if(wasRunning===true && !s.scan_running)await load();
+  if(wasRunning===true && !s.scan_running && !document.getElementById("activeCandidateRow"))await load();
  }catch(e){msg("状态更新失败："+e.message)}
 }
 setInterval(pollStatus,5000);
@@ -981,7 +981,7 @@ async function show(path,tr){
     let result=el("div");result.style.whiteSpace="pre-wrap";
     let previewBtn=el("button","预览修改差异");
     let aiBtn=el("button","可选 AI 润色建议");
-    let referenceId=null;
+    let referenceId=sessionStorage.getItem("subtitle_ref:"+path)||null;
     let refInput=el("input");refInput.type="file";refInput.accept=".srt,.ass,.ssa,.vtt";
     let refButton=el("button","上传原语言参考字幕");
     let refInfo=el("p","可选：上传日语或其他原语言字幕作为 AI 校对参考，不会覆盖中文字幕。");
@@ -992,10 +992,11 @@ async function show(path,tr){
       let query=new URLSearchParams({path,filename:file.name});
       let response=await fetch("/api/subtitles/reference/upload?"+query,{method:"POST",headers:{"X-Auth-Token":token,"Content-Type":"application/octet-stream"},body:file});
       let data=await response.json();if(!response.ok)throw Error(data.detail||response.status);
-      referenceId=data.id;refInfo.textContent="参考字幕已上传："+data.filename+"（仅用于 AI 对照）";
+      referenceId=data.id;sessionStorage.setItem("subtitle_ref:"+path,referenceId);refInfo.textContent="参考字幕已上传："+data.filename+"（仅用于 AI 对照）";
      }catch(e){refInfo.textContent="参考字幕上传失败："+e.message}
      finally{refButton.disabled=false}
     };
+    if(referenceId)refInfo.textContent="已恢复之前上传的参考字幕："+referenceId+"（可直接继续翻译）";
     panel.append(refInfo,refInput,refButton);
     let autoBtn=el("button","一键获取日语参考并整片 AI 校对");
     let autoStatus=el("p","自动流程不会覆盖原字幕；AI 建议需人工勾选并预览保存。");
@@ -1027,7 +1028,7 @@ async function show(path,tr){
        phase="AVSubtitles 网络请求中";googleStatus.textContent="正在获取日语字幕…";
        let found=await api("/api/subtitles/reference/auto","POST",{path});
        if(!found.reference_id)throw Error("AVSubtitles 未能自动获取："+(found.errors||[]).join("；").slice(0,250)+"。请先上传日语 SRT。");
-       googleRef=found.reference_id;referenceId=googleRef;refInfo.textContent="日语参考字幕："+googleRef;
+       googleRef=found.reference_id;referenceId=googleRef;sessionStorage.setItem("subtitle_ref:"+path,googleRef);refInfo.textContent="日语参考字幕："+googleRef;
       }
       if(!googleRef.endsWith(".srt"))throw Error("Google 初译目前仅支持日语 SRT");
       progress=await api("/api/subtitles/translate/status","POST",{path,reference_id:googleRef});
@@ -1074,6 +1075,14 @@ async function show(path,tr){
       googleBusy=false;googleBtn.disabled=false;googlePause.disabled=true;
      }
     };
+    if(referenceId&&referenceId.endsWith(".srt")){
+     api("/api/subtitles/translate/status","POST",{path,reference_id:referenceId}).then(v=>{
+      googleProgress.max=Math.max(1,v.total);googleProgress.value=v.next_offset;
+      googleProgressDetail.textContent="NAS 草稿："+v.next_offset+"/"+v.total+" 条 · 失败 "+v.failures+" 条"+(v.done?" · 初译已完成":" · 点击继续翻译");
+      googleStatus.textContent=v.started?"已恢复 NAS 之前保存的初译进度":"参考字幕已恢复，等待开始翻译";
+      googleBtn.textContent=v.started?"继续翻译":"Google 免费初译 → DeepSeek 润色";
+     }).catch(e=>{googleStatus.textContent="读取历史进度失败："+e.message});
+    }
     googlePreview.onclick=async()=>{
      if(!googleDone)return;
      googlePreview.disabled=true;
