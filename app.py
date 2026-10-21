@@ -528,9 +528,12 @@ async def optimize_ai(request:Request):
   key,model,endpoint=ai_provider_settings.credentials(DATA)
   if not key:raise HTTPException(503,"请先在网页 AI 设置中保存 API Key")
   try:
+   raw=target.read_bytes()
+   original_sha256=subtitle_optimizer.digest(raw)
+   if body.get("original_sha256") and body["original_sha256"]!=original_sha256:raise HTTPException(409,"字幕已发生变化，请重新开始 AI 校对")
    offset=body.get("offset",0)
-   batch,next_offset,done=subtitle_optimizer.ai_batch(target.read_bytes(),offset)
-   if done and not batch:return {"suggestions":[],"next_offset":next_offset,"done":True,"notice":"已完成全部批次"}
+   batch,next_offset,done=subtitle_optimizer.ai_batch(raw,offset)
+   if done and not batch:return {"suggestions":[],"original_sha256":original_sha256,"next_offset":next_offset,"done":True,"notice":"已完成全部批次"}
    reference=None
    reference_id=body.get("reference_id")
    if reference_id:
@@ -539,7 +542,8 @@ async def optimize_ai(request:Request):
     if not ref_path.is_file() or ref_path.stat().st_size>LIMIT:raise ValueError("参考字幕不存在或过大")
     reference=subtitle_optimizer.reference_for_window(target.read_bytes(),target.suffix.lower().lstrip("."),ref_path.read_bytes(),ref_path.suffix.lstrip("."),offset=offset)
    suggestions=await asyncio.to_thread(subtitle_optimizer.ai_suggestions,target.read_bytes(),target.suffix.lower().lstrip("."),key,model,endpoint,reference,offset)
-   return {"suggestions":suggestions,"next_offset":next_offset,"done":done,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
+   return {"suggestions":suggestions,"original_sha256":original_sha256,"next_offset":next_offset,"done":done,"notice":"仅供人工审核；无法仅凭字幕验证场景及翻译准确性；字幕正文会发送给所配置的 AI 服务。"}
+  except HTTPException:raise
   except Exception as exc:raise HTTPException(502,"AI 建议失败："+str(exc)[:160])
 @app.post("/api/candidates/quality")
 async def candidate_quality(request:Request):
@@ -779,13 +783,14 @@ async function show(path,tr){
     simplify.onchange=()=>{pending=null;applyBtn.disabled=true};
     punct.onchange=()=>{pending=null;applyBtn.disabled=true};
     sceneBtn.onclick=()=>{result.replaceChildren(el("p","远程 NAS 不读取视频或音频，无法自动核对场景。建议对照播放器中的对白与字幕；仅凭文本分析不能确认译文准确。"))};
-    let aiOffset=0;let aiFinished=false;
+    let aiOffset=0;let aiFinished=false;let aiSourceHash=null;
     aiBtn.onclick=async()=>{
-     if(aiFinished){aiOffset=0;aiFinished=false}
+     if(aiFinished){aiOffset=0;aiFinished=false;aiSourceHash=null}
      if(!confirm("本次仅向外部 API 发送一批最多 12000 字符的中文字幕"+(referenceId?"及最多 6000 字符的参考字幕":"")+"。确认继续？"))return;
      aiBtn.disabled=true;result.append(el("p","正在请求当前批次的 AI 文本建议（不会自动保存）…"));
      try{
-      let out=await api("/api/subtitles/optimize/ai","POST",{path,reference_id:referenceId,offset:aiOffset});
+      let out=await api("/api/subtitles/optimize/ai","POST",{path,reference_id:referenceId,offset:aiOffset,original_sha256:aiSourceHash});
+      aiSourceHash=out.original_sha256;
       aiOffset=out.next_offset;aiFinished=out.done;
       aiBtn.textContent=out.done?"重新从头校对":"校对下一批字幕";
       result.append(el("p",out.notice+" · "+(out.done?"全部批次已完成":"可继续下一批")));
