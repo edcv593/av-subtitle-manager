@@ -1075,11 +1075,11 @@ async function show(path,tr){
      if(!found.reference_id)throw Error("无法自动下载日语参考字幕："+(found.errors||[]).join("；").slice(0,200));
      if(!found.reference_id.endsWith(".srt"))throw Error("免费翻译目前仅支持日语 SRT，请先使用 SRT 参考字幕");
      translateRef=found.reference_id;
-     let restarted=false,rounds=0,translated;
+     let rounds=0,translated;
      while(true){
       translateStatus.textContent="Google 翻译中："+(translated?translated.next_offset+"/"+translated.total:"准备中")+" 条…";
-      translated=await api("/api/subtitles/translate/google","POST",{path,reference_id:translateRef,restart:!restarted});
-      restarted=true;rounds++;
+      translated=await api("/api/subtitles/translate/google","POST",{path,reference_id:translateRef});
+      rounds++;
       if(translated.done)break;
       if(rounds>300)throw Error("达到安全批次上限");
      }
