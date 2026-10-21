@@ -46,6 +46,27 @@ class ReviewQueueTests(unittest.TestCase):
   new,created=rq.enqueue(self.c,"/media/a.mp4")
   self.assertTrue(created)
   self.assertNotEqual(new["id"],row["id"])
+ def test_phase_persists_and_clears_after_completion(self):
+  row,_=rq.enqueue(self.c,"/media/a.mp4")
+  rq.claim(self.c)
+  rq.set_phase(self.c,row["id"],"正在检索日语参考字幕")
+  self.assertIn("检索",rq.list_jobs(self.c)[0]["phase"])
+  rq.checkpoint(self.c,row["id"],"sha",25,202,10,[])
+  self.assertEqual(rq.list_jobs(self.c)[0]["phase"],"已保存本批进度")
+  rq.finish(self.c,row["id"],"completed")
+  self.assertEqual(rq.list_jobs(self.c)[0]["phase"],"")
+ def test_existing_schema_is_migrated(self):
+  self.c.execute("DROP TABLE review_jobs")
+  self.c.execute("""CREATE TABLE review_jobs(
+   id INTEGER PRIMARY KEY AUTOINCREMENT, video_path TEXT NOT NULL,
+   status TEXT NOT NULL DEFAULT 'pending', reference_id TEXT NOT NULL DEFAULT '',
+   original_sha256 TEXT NOT NULL DEFAULT '', offset INTEGER NOT NULL DEFAULT 0,
+   total INTEGER NOT NULL DEFAULT 0, matched INTEGER NOT NULL DEFAULT 0,
+   suggestions TEXT NOT NULL DEFAULT '[]', auto_apply INTEGER NOT NULL DEFAULT 0,
+   error TEXT NOT NULL DEFAULT '', backup TEXT NOT NULL DEFAULT '',
+   changed INTEGER NOT NULL DEFAULT 0, created REAL NOT NULL, updated REAL NOT NULL)""")
+  rq.init(self.c)
+  self.assertIn("phase",[r[1] for r in self.c.execute("PRAGMA table_info(review_jobs)")])
  def test_invalid_transitions(self):
   row,_=rq.enqueue(self.c,"/media/a.mp4")
   with self.assertRaises(ValueError):rq.action(self.c,row["id"],"resume")
