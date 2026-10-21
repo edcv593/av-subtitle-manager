@@ -1142,9 +1142,8 @@ async function show(path,tr){
     googlePause.onclick=()=>{googlePaused=true;googlePause.disabled=true;googleStatus.textContent="暂停已请求，等待当前字幕批次完成后停止。草稿会保留。"};
     googleBtn.onclick=async()=>{
      if(googleBusy)return;
-     translationEngine.disabled=true;
      if(!confirm("将日语字幕文本发送到所选翻译引擎，并使用已配置的 DeepSeek 润色（可能产生费用）。确认？"))return;
-     googleBusy=true;googlePaused=false;googleBtn.disabled=true;googlePause.disabled=false;googlePreview.disabled=true;googleDone=false;googleEdits={};googleSuggestions.replaceChildren();
+     translationEngine.disabled=true;googleBusy=true;googlePaused=false;googleBtn.disabled=true;googlePause.disabled=false;googlePreview.disabled=true;googleDone=false;googleEdits={};googleSuggestions.replaceChildren();
      let startedAt=Date.now(),progress={next_offset:0,total:0,failures:0};
      let phase="连接字幕服务";
      googleTicker=setInterval(()=>googleProgressUpdate(progress.next_offset,progress.total,progress.failures,phase,startedAt),1000);
