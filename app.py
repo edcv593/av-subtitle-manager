@@ -650,7 +650,7 @@ async def translate_preview(request:Request):
   try:
    optimized,changes=subtitle_optimizer.optimize(raw,"srt",False,False,body.get("replacements",{}))
    if timeline.cues(original,"srt")!=timeline.cues(optimized,"srt"):raise ValueError("时间轴发生变化")
-   return {"draft_sha256":subtitle_optimizer.digest(raw),"optimized_sha256":subtitle_optimizer.digest(optimized),"changes":changes[:60],"changed":len(changes),"failed":len(state["failures"]),"notice":"只预览，不会覆盖原字幕"}
+   return {"draft_sha256":subtitle_optimizer.digest(raw),"optimized_sha256":subtitle_optimizer.digest(optimized),"changes":changes[:60],"changed":len(changes),"failed":len(state["failures"]),"sample":optimized.decode("utf-8","replace")[:2500],"notice":"只预览，不会覆盖原字幕"}
   except ValueError as exc:raise HTTPException(422,str(exc))
 
 @app.post("/api/subtitles/translate/save")
@@ -1112,7 +1112,8 @@ async function show(path,tr){
      let config={path,reference_id:translateRef,replacements:translateReplacements};
      let preview=await api("/api/subtitles/translate/preview","POST",config);
      if(preview.draft_sha256!==translateDigest)throw Error("翻译草稿已变化");
-     if(!confirm("翻译草稿已完成；AI 建议修改 "+preview.changed+" 行，Google 初译失败 "+preview.failed+" 条（失败行保留日语）。确认创建独立 .zh.srt？若已存在中文字幕，将拒绝覆盖。"))return;
+     translateResults.append(el("pre","生成字幕预览（前2500字符）：\\n"+preview.sample));
+     if(!confirm("已在页面显示字幕预览；AI 建议修改 "+preview.changed+" 行，Google 初译失败 "+preview.failed+" 条（失败行保留日语）。确认创建独立 .zh.srt？若已存在中文字幕，将拒绝覆盖。"))return;
      let saved=await api("/api/subtitles/translate/save","POST",{...config,draft_sha256:preview.draft_sha256,optimized_sha256:preview.optimized_sha256});
      msg("已生成："+saved.file);await render();
     }catch(e){translateStatus.textContent="保存失败："+e.message}
