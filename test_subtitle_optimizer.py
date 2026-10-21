@@ -1,4 +1,5 @@
 import unittest
+from subtitle_optimizer import reference_excerpt
 from unittest.mock import patch
 import subtitle_optimizer as opt
 
@@ -29,5 +30,12 @@ class OptimizerTests(unittest.TestCase):
   new,changes=opt.optimize(SRT,"srt",False,False)
   self.assertEqual(new,SRT)
   self.assertEqual(changes,[])
+
+class ReferenceSubtitleTests(unittest.TestCase):
+ def test_srt_reference_excerpt(self):
+  raw=b"1\\n00:00:01,000 --> 00:00:02,000\\nHello\\n"
+  self.assertIn("Hello",reference_excerpt(raw,"srt"))
+ def test_reject_invalid_reference(self):
+  with self.assertRaises(ValueError):reference_excerpt(b"hello","srt")
 
 if __name__=="__main__":unittest.main()
