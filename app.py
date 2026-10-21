@@ -588,6 +588,30 @@ def translation_draft_path(video_path,reference_id):
  key=hashlib.sha256((str(video_path)+"|"+reference_id).encode()).hexdigest()
  return DATA/"translation_drafts"/(key+".json")
 
+@app.post("/api/subtitles/translate/status")
+async def translate_google_status(request:Request):
+ """Return persisted translation progress without starting another request."""
+ auth(request);body=await request.json()
+ with db() as c:
+  p=video(c,str(body.get("path","")))
+  reference_id=body.get("reference_id","")
+  if not isinstance(reference_id,str) or not re.fullmatch(r"[0-9a-f]{64}\.srt",reference_id):
+   raise HTTPException(400,"参考字幕标识无效")
+  source=DATA/"reference_subtitles"/reference_id
+  if not source.is_file() or source.stat().st_size>LIMIT:raise HTTPException(404,"日语参考字幕不存在")
+  raw=source.read_bytes()
+  if hashlib.sha256(raw).hexdigest()!=reference_id.split(".")[0]:raise HTTPException(409,"日语参考字幕已变化")
+  total=len(timeline.cues(raw,"srt") or [])
+  if not total:raise HTTPException(422,"参考字幕时间轴无效")
+  state_path=translation_draft_path(p,reference_id)
+  if not state_path.exists():
+   return {"next_offset":0,"total":total,"failures":0,"done":False,"started":False}
+  state=json.loads(state_path.read_text("utf-8"))
+  if state.get("source_sha256")!=hashlib.sha256(raw).hexdigest():raise HTTPException(409,"翻译源文件已变化")
+  completed=state.get("offset",0)
+  if not isinstance(completed,int) or completed<0 or completed>total:raise HTTPException(409,"翻译进度文件无效")
+  return {"next_offset":completed,"total":total,"failures":len(state.get("failures",[])),"done":completed>=total,"started":True}
+
 @app.post("/api/subtitles/translate/google")
 async def translate_google_batch(request:Request):
  """Resume a bounded, text-only translation batch; never write to the media share."""
@@ -613,7 +637,7 @@ async def translate_google_batch(request:Request):
   if state["offset"]>=len(timeline.cues(raw,"srt")):
    return {"done":True,"next_offset":state["offset"],"total":state["offset"],"failures":len(state["failures"]),"draft_sha256":subtitle_optimizer.digest(state["draft"].encode()),"notice":"初译已完成"}
   try:
-   out=await asyncio.to_thread(subtitle_google.translate_srt,state["draft"].encode("utf-8"),state["offset"],10)
+   out=await asyncio.to_thread(subtitle_google.translate_srt,state["draft"].encode("utf-8"),state["offset"],2)
    if timeline.cues(raw,"srt")!=timeline.cues(out["translated_text"].encode("utf-8"),"srt"):raise ValueError("时间轴发生变化")
    state["draft"]=out["translated_text"];state["offset"]=out["next_offset"]
    state["failures"].extend(out["failed"])
