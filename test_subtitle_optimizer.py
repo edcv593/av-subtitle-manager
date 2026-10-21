@@ -64,7 +64,12 @@ class ReferenceSubtitleTests(unittest.TestCase):
   with patch.object(opt.urllib.request,"urlopen",return_value=FakeResponse()):
    self.assertEqual(opt.ai_suggestions(raw,"srt","test-key"),[])
  def test_ai_batch_rejects_midline_offset(self):
-  with self.assertRaises(ValueError):opt.ai_batch(SRT,2)
+  with self.assertRaises(ValueError):opt.ai_batch(SRT,3)
+ def test_ai_batch_accepts_line_boundary_offset(self):
+  sample,next_offset,done=opt.ai_batch(SRT,2)
+  self.assertTrue(sample.startswith("00:00:01,000 -->"))
+  self.assertEqual(next_offset,len(SRT.decode()))
+  self.assertTrue(done)
  def test_second_batch_reference_uses_later_cues(self):
   chinese=("1\n00:00:01,000 --> 00:00:02,000\n中文一\n\n2\n00:00:10,000 --> 00:00:11,000\n中文二\n").encode()
   japanese=("1\n00:00:01,000 --> 00:00:02,000\n日本語一\n\n2\n00:00:10,000 --> 00:00:11,000\n日本語二\n").encode()
