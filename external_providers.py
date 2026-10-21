@@ -77,7 +77,7 @@ def detail_downloads(source,url,page,max_links=8):
 SEARCH_ENDPOINTS={
  "AVSubtitles":lambda code:"https://www.avsubtitles.com/search_results.php?"+urllib.parse.urlencode({"search":code}),
  "Subtitle Cat":lambda code:"https://www.subtitlecat.com/?"+urllib.parse.urlencode({"search":code}),
- "JAV字幕":lambda code:"https://javzimu.com/search/"+urllib.parse.quote(code,safe=""),
+ "JAV字幕":lambda code:"https://javzimu.com/api/search?"+urllib.parse.urlencode({"name":code}),
 }
 class SearchLinks(HTMLParser):
  def __init__(self):
@@ -164,11 +164,15 @@ def native_search(number,fetch_text,max_pages=5,source=None):
   try:
    raw=fetch_text(url,350000)
    if site=="JAV字幕":
-    # Browser search is protected by an interactive image CAPTCHA. Do not bypass it.
-    if b"captcha" in raw.lower() or "验证码" in raw.decode("utf-8","replace") or "图片验证" in raw.decode("utf-8","replace"):
-     errors[site]="需要在浏览器完成图片验证码；完成后请下载字幕并通过上传入口导入"
+    # Use the public JSON search endpoint rather than scraping the interactive search UI.
+    if b"captcha" in raw.lower() or "验证码" in raw.decode("utf-8","replace"):
+     errors[site]="站点要求人工验证码，无法在 NAS 后端继续搜索"
      found[site]=[]
      continue
+    pages=javzimu_results(raw,number,max_items=max_pages)
+    stats[site]["links_seen"]=len(pages)
+    found[site]=pages
+    continue
    parser=SearchLinks();parser.feed(raw.decode("utf-8","replace"))
    stats[site]["links_seen"]=len(parser.links)
    for href,title in parser.links:
